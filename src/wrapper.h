@@ -1,0 +1,419 @@
+#pragma once
+#include <memory>
+#include <vector>
+#include <utility>
+#include <string>
+#include <iostream>
+#include "gdstk/gdstk.hpp"
+
+namespace rust_helper {    
+    extern "C" {
+        typedef bool (*PointCallback)(double x, double y, void* user_data);
+        typedef void (*OffsetCallback)(double x, double y, void* user_data);
+    }
+
+    enum LayerIntervalType {
+        AllValues,
+        UpperBound,
+        LowerBound,
+        SingleValue,
+        Bounded,
+    };
+    // transfer objects
+    struct Point2D {
+        double x;
+        double y;
+    };
+    struct BoundingBox {
+        Point2D min;
+        Point2D max;
+    };
+    struct LayerInterval {
+        LayerIntervalType interval_type;
+        uint64_t bound_a;
+        uint64_t bound_b;
+    };
+    struct PolygonArrayTransfer {
+        gdstk::Array<gdstk::Polygon*> data;
+        inline size_t count() const { return data.count; }
+        inline std::unique_ptr<class PolygonOwner> into(size_t i) { 
+            auto ptr = std::make_unique<class PolygonOwner>(data[i]);
+            data[i] = nullptr;
+            return ptr;
+        }
+        inline void cleanup() {
+            for (size_t i = 0; i < data.count; ++i) {
+                if (data[i] != nullptr) {
+                    data[i]->clear();
+                    free_allocation(data[i]);
+                    data[i] = nullptr;
+                }
+            }
+            data.clear();
+        }
+    };
+    struct TopLevelResult {
+        gdstk::Array<gdstk::Cell*> cells;
+        gdstk::Array<gdstk::RawCell*> rawcells;
+
+        inline size_t n_cells() const { return cells.count; }
+        inline size_t n_rawcells() const { return rawcells.count; }
+        const gdstk::Cell* cell(size_t i) const { 
+            assert(i < cells.count);
+            return cells[i]; 
+        }
+        const gdstk::RawCell* rawcell(size_t i) const { 
+            assert(i < rawcells.count);
+            return rawcells[i]; 
+        }
+        void cleanup() {
+            cells.clear();
+            rawcells.clear();
+        }
+    };
+    // library
+    struct LibraryOwner {
+    public:
+        gdstk::Library core;
+        LibraryOwner(gdstk::Library ins):core(ins) {}
+        ~LibraryOwner() {
+            core.clear();
+            core.free_all();
+        }
+    };
+    inline std::unique_ptr<LibraryOwner> library_read_gds(
+        const char *filename, double unit, double tolerance, gdstk::ErrorCode* error_code) {
+        return std::make_unique<LibraryOwner>(gdstk::read_gds(filename, unit, tolerance, nullptr, error_code));
+    }
+    inline std::unique_ptr<LibraryOwner> library_read_oas(
+        const char *filename, double unit, double tolerance, gdstk::ErrorCode* error_code) {
+        return std::make_unique<LibraryOwner>(gdstk::read_oas(filename, unit, tolerance, error_code));
+    }
+    inline TopLevelResult library_get_top_level(
+        const LibraryOwner& self
+    ) {
+        TopLevelResult result{};
+        self.core.top_level(result.cells, result.rawcells);
+        return result;
+    }
+    inline gdstk::Cell* library_get_cell(
+        const LibraryOwner& self,
+        const char *name
+    ) {
+        return self.core.get_cell(name);
+    }
+    inline gdstk::RawCell* library_get_rawcell(
+        const LibraryOwner& self,
+        const char *name
+    ) {
+        return self.core.get_rawcell(name);
+    }
+    inline double library_get_unit(const LibraryOwner& self) {
+        return self.core.unit;
+    }
+    inline double library_get_precision(const LibraryOwner& self) {
+        return self.core.precision;
+    }
+    inline size_t library_count_layernames(const LibraryOwner& self) {
+        return self.core.layer_names.count;
+    }
+    inline const gdstk::LayerName* library_get_layername(const LibraryOwner& self, size_t i) {
+        assert(i < self.core.layer_names.count);
+        return &self.core.layer_names[i];
+    }
+    // Label
+    inline std::string label_get_text(const gdstk::Label& label) {
+        if (label.text == nullptr) {
+            return "";
+        }
+        return std::string(label.text);
+    }
+    inline BoundingBox label_get_bounding_box(const gdstk::Label &label) {
+        gdstk::Vec2 min, max;
+        label.bounding_box(min, max);
+        return {{min.x, min.y}, {max.x, max.y}};
+    }
+    inline Point2D label_get_position(const gdstk::Label &label) {
+        return {label.origin.x, label.origin.y};
+    }
+    // LayerName
+    inline std::string layername_get_name(const gdstk::LayerName& layername) {
+        if (layername.name == nullptr) {
+            return "";
+        }
+        return std::string(layername.name);
+    }
+    inline uint32_t layername_get_layer(const gdstk::LayerName& layername) {
+        return layername.layer_interval.bound_a;
+    }
+    inline uint32_t layername_get_datatype(const gdstk::LayerName& layername) {
+        return layername.type_interval.bound_a;
+    }
+    inline LayerInterval gdstk_layer_interval_to(const gdstk::LayerNameInterval &interval) {
+        LayerIntervalType type = LayerIntervalType::AllValues;
+        switch (interval.type) {
+            case gdstk::OasisInterval::AllValues:
+                type = LayerIntervalType::AllValues;
+                break;
+            case gdstk::OasisInterval::UpperBound:
+                type = LayerIntervalType::UpperBound;
+                break;
+            case gdstk::OasisInterval::LowerBound:
+                type = LayerIntervalType::LowerBound;
+                break;
+            case gdstk::OasisInterval::SingleValue:
+                type = LayerIntervalType::SingleValue;
+                break;
+            case gdstk::OasisInterval::Bounded:
+                type = LayerIntervalType::Bounded;
+                break;
+        }
+        return {type, interval.bound_a, interval.bound_b};
+    }
+    inline LayerInterval layername_get_layer_interval(const gdstk::LayerName& layername) {
+        return gdstk_layer_interval_to(layername.layer_interval);
+    }
+    inline LayerInterval layername_get_datatype_interval(const gdstk::LayerName& layername) {
+        return gdstk_layer_interval_to(layername.type_interval);
+    }
+    // Cell
+    inline std::string cell_get_name(const gdstk::Cell& cell) {
+        if (cell.name == nullptr) {
+            return "";
+        }
+        return std::string(cell.name);
+    }
+    inline PolygonArrayTransfer cell_get_polygons(
+        const gdstk::Cell &cell,
+        bool apply_repetitions, 
+        bool include_paths, 
+        int64_t depth, 
+        bool filter,
+        gdstk::Tag tag
+    ) {
+        PolygonArrayTransfer result = {.data={}};
+        cell.get_polygons(apply_repetitions, include_paths, depth, filter, tag, result.data);
+        return result;
+    }
+    inline BoundingBox cell_get_bounding_box(const gdstk::Cell &cell) {
+        gdstk::Vec2 min, max;
+        cell.bounding_box(min, max);
+        return {{min.x, min.y}, {max.x, max.y}};
+    }
+    inline size_t cell_count_polygon_refs(const gdstk::Cell &cell) {
+        return cell.polygon_array.count;
+    }
+    inline gdstk::Polygon *cell_get_polygon_ref(const gdstk::Cell &cell, size_t i) {
+        assert(i < cell.polygon_array.count);
+        return cell.polygon_array[i];
+    }
+    inline size_t cell_count_references(const gdstk::Cell &cell) {
+        return cell.reference_array.count;
+    }
+    inline gdstk::Reference *cell_get_reference(const gdstk::Cell &cell, size_t i) {
+        assert(i < cell.reference_array.count);
+        return cell.reference_array[i];
+    }
+    inline size_t cell_count_flexpaths(const gdstk::Cell &cell) {
+        return cell.flexpath_array.count;
+    }
+    inline gdstk::FlexPath *cell_get_flexpath(const gdstk::Cell &cell, size_t i) {
+        assert(i < cell.flexpath_array.count);
+        return cell.flexpath_array[i];
+    }
+    inline size_t cell_count_robustpaths(const gdstk::Cell &cell) {
+        return cell.robustpath_array.count;
+    }
+    inline gdstk::RobustPath *cell_get_robustpath(const gdstk::Cell &cell, size_t i) {
+        assert(i < cell.robustpath_array.count);
+        return cell.robustpath_array[i];
+    }
+    inline size_t cell_count_labels(const gdstk::Cell &cell) {
+        return cell.label_array.count;
+    }
+    inline gdstk::Label *cell_get_label(const gdstk::Cell &cell, size_t i) {
+        assert(i < cell.label_array.count);
+        return cell.label_array[i];
+    }
+    // PolygonRef
+    inline BoundingBox polygon_ref_get_bounding_box(const gdstk::Polygon &self) {
+        gdstk::Vec2 min, max;
+        self.bounding_box(min, max);
+        return {{min.x, min.y}, {max.x, max.y}};
+    }
+    inline void polygon_ref_copy(const gdstk::Polygon &src, gdstk::Polygon &dest) {
+        dest.copy_from(src);
+    }
+    inline void polygon_ref_translate(gdstk::Polygon &self, double x, double y) {
+        self.translate(gdstk::Vec2{x, y});
+    }
+    inline void polygon_ref_scale(gdstk::Polygon &self, double scale_x, double scale_y, double center_x, double center_y) {
+        self.scale(gdstk::Vec2{scale_x, scale_y}, gdstk::Vec2{center_x, center_y});
+    }
+    inline void polygon_ref_mirror(gdstk::Polygon &self, double x0, double y0, double x1, double y1) {
+        self.mirror(gdstk::Vec2{x0, y0}, gdstk::Vec2{x1, y1});
+    }
+    inline void polygon_ref_rotate(gdstk::Polygon &self, double angle, double x, double y) {
+        self.rotate(angle, gdstk::Vec2{x, y});
+    }
+    inline uint32_t polygon_ref_layer(const gdstk::Polygon &self) {
+        return gdstk::get_layer(self.tag);
+    }
+    inline uint32_t polygon_ref_datatype(const gdstk::Polygon &self) {
+        return gdstk::get_type(self.tag);
+    }
+    inline bool polygon_ref_foreach_point(
+        const gdstk::Polygon &self,
+        void* callback_ptr,
+        void* user_data
+    ) {
+        assert(callback_ptr != nullptr);
+        auto callback = reinterpret_cast<PointCallback>(callback_ptr);
+        for (auto i = 0; i < self.point_array.count; ++i) {
+            auto p = self.point_array[i];
+            if ( !callback(p.x, p.y, user_data) )
+                return false;
+        }
+        return true;
+    }
+    inline void repetition_foreach_offset(
+        const gdstk::Repetition &self,
+        void* callback_ptr,
+        void* user_data
+    ) {
+        assert(callback_ptr != nullptr);
+        auto callback = reinterpret_cast<OffsetCallback>(callback_ptr);
+        if (self.type == gdstk::RepetitionType::None) {
+            callback(0, 0, user_data);
+            return;
+        }
+        gdstk::Array<gdstk::Vec2> offsets = {};
+        self.get_offsets(offsets);
+        for (uint64_t i = 0; i < offsets.count; ++i) {
+            auto p = offsets[i];
+            callback(p.x, p.y, user_data);
+        }
+        offsets.clear();
+    }
+    inline const gdstk::Repetition *polygon_ref_get_repetition(const gdstk::Polygon &self) {
+        return &self.repetition;
+    }
+    // Polygon
+    class PolygonOwner {
+        public:
+        gdstk::Polygon *core;
+        PolygonOwner() {
+            core = (gdstk::Polygon*)gdstk::allocate_clear(sizeof(gdstk::Polygon));
+            if (!core) {
+                throw std::bad_alloc();
+            }
+        }
+        PolygonOwner(gdstk::Polygon *raw) {
+            core = raw;
+        }
+        ~PolygonOwner() {
+            if (core) {
+                core->clear();
+                gdstk::free_allocation(core);
+                core = nullptr;
+            }
+        }
+        gdstk::Polygon* poly() { 
+            assert(core != nullptr);
+            return core;
+        }
+        const gdstk::Polygon* poly() const { 
+            assert(core != nullptr);
+            return core;
+        }
+    };
+    inline std::unique_ptr<PolygonOwner> polygon_new() {
+        return std::make_unique<PolygonOwner>();
+    }    
+    inline std::unique_ptr<PolygonOwner> polygon_new_from_ref(const gdstk::Polygon *raw) {
+        auto ptr = std::make_unique<PolygonOwner>();
+        ptr->poly()->copy_from(*raw);
+        return ptr;
+    }
+    inline void polygon_copy(const PolygonOwner &src, PolygonOwner &dest) {
+        polygon_ref_copy(*src.poly(), *dest.poly());
+    }
+    inline void polygon_translate(PolygonOwner &self, double x, double y) {
+        polygon_ref_translate(*self.poly(), x, y);
+    }
+    inline void polygon_scale(PolygonOwner &self, double scale_x, double scale_y, double center_x, double center_y) {
+        polygon_ref_scale(*self.poly(), scale_x, scale_y, center_x, center_y);
+    }
+    inline void polygon_mirror(PolygonOwner &self, double x0, double y0, double x1, double y1) {
+        polygon_ref_mirror(*self.poly(), x0, y0, x1, y1);
+    }
+    inline void polygon_rotate(PolygonOwner &self, double angle, double x, double y) {
+        polygon_ref_rotate(*self.poly(), angle, x, y);
+    }
+    inline uint32_t polygon_layer(const PolygonOwner &self) {
+        return polygon_ref_layer(*self.poly());
+    }
+    inline uint32_t polygon_datatype(const PolygonOwner &self) {
+        return polygon_ref_datatype(*self.poly());
+    }
+    inline BoundingBox polygon_get_bounding_box(const PolygonOwner &self) {
+        return polygon_ref_get_bounding_box(*self.poly());
+    }
+    inline bool polygon_foreach_point(
+        const PolygonOwner &self,
+        void* callback_ptr,
+        void* user_data
+    ) {
+        auto poly = self.poly();
+        return polygon_ref_foreach_point(*poly, callback_ptr, user_data);
+    }
+    inline gdstk::Polygon* polygon_to_ref(
+        const PolygonOwner &self
+    ) {
+        return self.core;
+    }
+    // FlexPath
+    inline PolygonArrayTransfer flexpath_to_polygons(const gdstk::FlexPath &self) {
+        PolygonArrayTransfer result{};
+        gdstk::FlexPath dup{};
+        dup.copy_from(self);
+        dup.to_polygons(false, 0, result.data);
+        dup.clear();
+        return result;
+    }
+    // RobustPath
+    inline PolygonArrayTransfer robustpath_to_polygons(const gdstk::RobustPath &self) {
+        PolygonArrayTransfer result{};
+        self.to_polygons(false, 0, result.data);
+        return result;
+    }
+    // Reference
+    inline gdstk::Cell *reference_get_cell(const gdstk::Reference &self) {
+        if (self.type != gdstk::ReferenceType::Cell) {
+            return nullptr;
+        }
+        return self.cell;
+    }
+    inline Point2D reference_get_translate(const gdstk::Reference &self) {
+        return {self.origin.x, self.origin.y};
+    }
+    inline double reference_get_scale(const gdstk::Reference &self) {
+        return self.magnification;
+    }
+    inline double reference_get_rotation(const gdstk::Reference &self) {
+        return self.rotation;
+    }
+    inline bool reference_get_x_reflection(const gdstk::Reference &self) {
+        return self.x_reflection;
+    }
+    inline const gdstk::Repetition *reference_get_repetition(const gdstk::Reference &self) {
+        return &self.repetition;
+    }
+    // RawCell
+    inline std::string rawcell_get_name(const gdstk::RawCell& cell) {
+        if (cell.name == nullptr) {
+            return "";
+        }
+        return std::string(cell.name);
+    }
+}
