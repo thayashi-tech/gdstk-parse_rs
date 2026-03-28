@@ -128,17 +128,11 @@ struct Args {
     #[arg(short = 'o', long, default_value = "output.png")]
     output: String,
 
-    #[arg(short = 'W', long, default_value_t = 1024)]
+    #[arg(short = 'W', long, default_value_t = 512)]
     width: u32,
 
-    #[arg(short = 'H', long, default_value_t = 1024)]
+    #[arg(short = 'H', long, default_value_t = 512)]
     height: u32,
-
-    #[arg(short = 'l', long)]
-    layer: Option<i32>,
-
-    #[arg(short = 'd', long)]
-    datatype: Option<i32>,
 }
 
 fn main() {
