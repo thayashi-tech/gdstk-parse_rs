@@ -9,6 +9,8 @@ use cgmath;
 use cgmath::One;
 use std::cell::RefCell;
 use std::ffi::CString;
+use thiserror::Error;
+
 pub type Point = cgmath::Point2<f64>;
 pub type Vector = cgmath::Vector2<f64>;
 pub type Vector3 = cgmath::Vector3<f64>;
@@ -117,25 +119,43 @@ include_cpp! {
     generate!("rust_helper::rawcell_get_name")
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Error)]
 pub enum ErrorCode {
+    #[error("no error")]
     NoError,
+    #[error("boolean error")]
     BooleanError,
+    #[error("empty path")]
     EmptyPath,
+    #[error("intersection not found")]
     IntersectionNotFound,
+    #[error("missing reference")]
     MissingReference,
+    #[error("unsupported record")]
     UnsupportedRecord,
+    #[error("unofficial specification")]
     UnofficialSpecification,
+    #[error("invalid repetition")]
     InvalidRepetition,
+    #[error("overflow")]
     Overflow,
+    #[error("checksum error")]
     ChecksumError,
+    #[error("output file open error")]
     OutputFileOpenError,
+    #[error("input file open error")]
     InputFileOpenError,
+    #[error("input file error")]
     InputFileError,
+    #[error("file error")]
     FileError,
+    #[error("invalid file")]
     InvalidFile,
+    #[error("insufficient memory")]
     InsufficientMemory,
+    #[error("zlib error")]
     ZlibError,
+    #[error("unknown: {0}")]
     Unknown(i32),
 }
 

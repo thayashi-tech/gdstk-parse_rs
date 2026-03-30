@@ -1,7 +1,7 @@
+use anyhow::{anyhow, Result};
 use clap::Parser;
 use gdstk_parse::{ApplyTransform, Cell, GetBoundingBox, Library, Point};
 use image::{Rgba, RgbaImage};
-use imageproc::drawing::draw_line_segment_mut;
 use imageproc::drawing::draw_polygon_mut;
 use imageproc::drawing::Canvas;
 use imageproc::point::Point as ImgPoint;
@@ -98,26 +98,6 @@ fn draw_polygons(cell: &Cell, width: u32, height: u32) -> RgbaImage {
         }
         true
     });
-    let black = Rgba([0, 0, 0, 255]);
-    let step = 0.5;
-    let x0 = (min.x / step).floor() * step;
-    let x1 = ((min.x + cell_size) / step).ceil() * step;
-    let xcount = ((x1 - x0) / step).ceil() as usize;
-    for i in 0..=xcount {
-        let x = x0 + i as f64 * step;
-        let x_f = (x as f64 - min.x) * scale_x;
-        let x_f = x_f as f32;
-        draw_line_segment_mut(&mut canvas, (x_f, 0.0), (x_f, height as f32), black);
-    }
-    let y0 = (min.y / step).floor() * step;
-    let y1 = ((min.y + cell_size) / step).ceil() * step;
-    let ycount = ((y1 - y0) / step).ceil() as usize;
-    for i in 0..=ycount {
-        let y = y0 + i as f64 * step;
-        let y_f = (y as f64 - min.y) * scale_y;
-        let y_f = y_f as f32;
-        draw_line_segment_mut(&mut canvas, (0.0, y_f), (width as f32, y_f), black);
-    }
     image
 }
 #[derive(Parser, Debug)]
@@ -135,21 +115,20 @@ struct Args {
     height: u32,
 }
 
-fn main() {
+fn main() -> Result<()> {
     let args = Args::parse();
     let path = Path::new(&args.input);
     let lib = if let Some(ext) = path.extension() {
         if ext == "oas" {
-            Library::from_oas(&args.input).expect("Failed to read OASIS")
+            Library::from_oas(&args.input)
         } else if ext == "gds" {
-            Library::from_gds(&args.input, 0.0, 0.0).expect("Failed to read GDSII")
+            Library::from_gds(&args.input, 0.0, 0.0)
         } else {
-            return;
+            return Err(anyhow!("unsupported extension {:?}", ext));
         }
     } else {
-        println!("No extension found.");
-        return;
-    };
+        return Err(anyhow!("no extension found"));
+    }?;
 
     let (cells, _) = lib.top_level();
     println!("number of cells {}", cells.len());
@@ -173,4 +152,5 @@ fn main() {
             .expect("fail to save image");
         break;
     }
+    Ok(())
 }

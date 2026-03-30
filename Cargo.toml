@@ -7,6 +7,7 @@ edition = "2024"
 autocxx = "0.30.0"
 cgmath = "0.18.0"
 cxx = "1.0.194"
+thiserror = "2.0.18"
 
 [build-dependencies]
 autocxx-build = "0.30.0"
@@ -15,3 +16,4 @@ autocxx-build = "0.30.0"
 image = "0.25.10"
 imageproc = "0.26.1"
 clap = { version = "4.6.0", features = ["derive"] }
+anyhow = "1.0.102"
