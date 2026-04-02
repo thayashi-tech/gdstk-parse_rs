@@ -2,8 +2,8 @@ use anyhow::{anyhow, Result};
 use clap::Parser;
 use gdstk_parse::{ApplyTransform, Cell, GetBoundingBox, Library, Point};
 use image::{Rgba, RgbaImage};
-use imageproc::drawing::draw_polygon_mut;
 use imageproc::drawing::Canvas;
+use imageproc::drawing::{draw_line_segment_mut, draw_polygon_mut};
 use imageproc::point::Point as ImgPoint;
 use std::collections::HashMap;
 use std::path::Path;
@@ -53,7 +53,13 @@ impl SimpleRng {
         Rgba([r, g, b, 64])
     }
 }
-fn draw_polygons(cell: &Cell, width: u32, height: u32) -> RgbaImage {
+fn draw_polygons(
+    cell: &Cell,
+    width: u32,
+    height: u32,
+    cell_bounds: bool,
+    polygon_bounds: bool,
+) -> RgbaImage {
     let mut rng = SimpleRng::new(42);
 
     let (min, max) = cell.bounding_box();
@@ -73,6 +79,22 @@ fn draw_polygons(cell: &Cell, width: u32, height: u32) -> RgbaImage {
     let mut canvas = BlendCanvas(&mut image);
     let mut colors: HashMap<(u32, u32), Rgba<u8>> = HashMap::new();
 
+    let point_to_canvas = |p: Point| {
+        let px = ((p.x - min.x) * scale_x) as f32;
+        let py = (height as f32) - ((p.y - min.y) * scale_y) as f32;
+        (px, py)
+    };
+    let draw_area = |canvas: &mut BlendCanvas, area: (Point, Point), color: Rgba<u8>| {
+        let (lb, rt) = area;
+        let points = [lb, Point::new(lb.x, rt.y), rt, Point::new(rt.x, lb.y)];
+        for i in 0..4 {
+            let s = points[i];
+            let e = points[(i + 1) % 4];
+            draw_line_segment_mut(canvas, point_to_canvas(s), point_to_canvas(e), color)
+        }
+    };
+
+    let mut count = 0;
     cell.traverse_polygons(|poly, _cell, trans| {
         let color = *colors
             .entry((poly.layer(), poly.datatype()))
@@ -86,18 +108,27 @@ fn draw_polygons(cell: &Cell, width: u32, height: u32) -> RgbaImage {
                     .iter()
                     .map(|p| {
                         let p = p.apply_transform(transform);
-                        let px = ((p.x - min.x) * scale_x) as i32;
-                        let py = (height as i32) - ((p.y - min.y) * scale_y) as i32;
-                        ImgPoint::new(px, py)
+                        let (px, py) = point_to_canvas(p);
+                        ImgPoint::new(px as i32, py as i32)
                     })
                     .collect();
+                count += 1;
                 if points.len() >= 3 {
                     draw_polygon_mut(&mut canvas, &points, color);
                 }
             }
+            if polygon_bounds {
+                let bbox = poly.bounding_box();
+                let bbox = (bbox.0.apply_transform(*t), bbox.1.apply_transform(*t));
+                draw_area(&mut canvas, bbox, rng.next_rgba());
+            }
         }
         true
     });
+    if cell_bounds {
+        draw_area(&mut canvas, cell.bounding_box(), rng.next_rgba());
+    }
+    println!("number of polygon is {}", count);
     image
 }
 #[derive(Parser, Debug)]
@@ -113,6 +144,12 @@ struct Args {
 
     #[arg(short = 'H', long, default_value_t = 512)]
     height: u32,
+
+    #[arg(long, default_value_t = false)]
+    cell_bounds: bool,
+
+    #[arg(long, default_value_t = false)]
+    polygon_bounds: bool,
 }
 
 fn main() -> Result<()> {
@@ -147,9 +184,15 @@ fn main() -> Result<()> {
     }
     // draw top level
     for cell in cells.iter() {
-        draw_polygons(cell, args.width, args.height)
-            .save(args.output)
-            .expect("fail to save image");
+        draw_polygons(
+            cell,
+            args.width,
+            args.height,
+            args.cell_bounds,
+            args.polygon_bounds,
+        )
+        .save(args.output)
+        .expect("fail to save image");
         break;
     }
     Ok(())
