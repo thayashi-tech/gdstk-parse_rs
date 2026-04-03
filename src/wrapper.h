@@ -6,7 +6,7 @@
 #include <iostream>
 #include "gdstk/gdstk.hpp"
 
-namespace rust_helper {    
+namespace gdstk_parse_rs {    
     extern "C" {
         typedef bool (*PointCallback)(double x, double y, void* user_data);
         typedef void (*OffsetCallback)(double x, double y, void* user_data);
