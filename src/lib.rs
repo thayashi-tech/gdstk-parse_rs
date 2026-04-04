@@ -5,16 +5,15 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
 use autocxx::prelude::*;
-use cgmath;
-use cgmath::One;
+use glam;
 use std::cell::RefCell;
 use std::ffi::CString;
 use thiserror::Error;
 
-pub type Point = cgmath::Point2<f64>;
-pub type Vector = cgmath::Vector2<f64>;
-pub type Vector3 = cgmath::Vector3<f64>;
-pub type Matrix3 = cgmath::Matrix3<f64>;
+pub type Point = glam::DVec2;
+pub type Vector = glam::DVec2;
+pub type Vector3 = glam::DVec3;
+pub type Matrix3 = glam::DMat3;
 
 include_cpp! {
     #include "wrapper.h"
@@ -499,20 +498,20 @@ impl<'a> Reference<'a> {
     fn rotation(&self) -> Matrix3 {
         unsafe {
             let rad = ffi::gdstk_parse_rs::reference_get_rotation(&*self.inner);
-            Matrix3::from_angle_z(cgmath::Rad(rad))
+            Matrix3::from_rotation_z(rad)
         }
     }
     fn scale(&self) -> Matrix3 {
         unsafe {
             let s = ffi::gdstk_parse_rs::reference_get_scale(&*self.inner);
-            Matrix3::from_scale(s)
+            Matrix3::from_diagonal(Vector3::new(s, s, 1.0))
         }
     }
     fn relfection(&self) -> Matrix3 {
         unsafe {
             let x_ref = ffi::gdstk_parse_rs::reference_get_x_reflection(&*self.inner);
             let r1 = if x_ref { -1.0 } else { 1.0 };
-            Matrix3::from_nonuniform_scale(1.0, r1)
+            Matrix3::from_diagonal(Vector3::new(1.0, r1, 1.0))
         }
     }
     pub fn repetition(&self) -> Repetition<'a> {
@@ -684,7 +683,7 @@ impl<'a> Cell<'a> {
         }
     }
     pub fn traverse_shapes<V: ShapeVisitor>(&self, visitor: &mut V) -> bool {
-        let trans = vec![Matrix3::one()];
+        let trans = vec![Matrix3::IDENTITY];
         self.traverse_shapes_recursive(visitor, &trans)
     }
     pub(crate) fn traverse_shapes_recursive<V: ShapeVisitor>(
