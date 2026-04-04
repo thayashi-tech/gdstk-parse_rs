@@ -90,6 +90,7 @@ include_cpp! {
     generate!("gdstk_parse_rs::PointCallback")
     generate!("gdstk_parse_rs::polygon_get_bounding_box")
     generate!("gdstk_parse_rs::polygon_to_ref")
+    generate!("gdstk_parse_rs::polygon_get_signed_area")
 
     // polygon_ref
     generate!("gdstk_parse_rs::polygon_ref_get_bounding_box")
@@ -97,6 +98,7 @@ include_cpp! {
     generate!("gdstk_parse_rs::polygon_ref_layer")
     generate!("gdstk_parse_rs::polygon_ref_datatype")
     generate!("gdstk_parse_rs::polygon_ref_foreach_point")
+    generate!("gdstk_parse_rs::polygon_ref_get_signed_area")
 
     // flexpath
     generate!("gdstk_parse_rs::flexpath_to_polygons")
@@ -324,6 +326,12 @@ impl Polygon {
             }
         }
     }
+    /// return signed area of polygon
+    /// Polygon area excluding repetitions with sign indicating orientation
+    /// (positive for counter clockwise)
+    pub fn signed_area(&self) -> f64 {
+        unsafe { unsafe { ffi::gdstk_parse_rs::polygon_get_signed_area(&*self.inner) } }
+    }
 }
 impl GetBoundingBox for Polygon {
     fn bounding_box(&self) -> (Point, Point) {
@@ -419,8 +427,16 @@ impl<'a> PolygonRef<'a> {
             }
         }
     }
+    /// return signed area of polygon
+    /// Polygon area excluding repetitions with sign indicating orientation
+    /// (positive for counter clockwise)
+    pub fn signed_area(&self) -> f64 {
+        unsafe { ffi::gdstk_parse_rs::polygon_ref_get_signed_area(&*self.inner) }
+    }
 }
 impl<'a> GetBoundingBox for PolygonRef<'a> {
+    /// return bounding box
+    /// repetitions are taken into account
     fn bounding_box(&self) -> (Point, Point) {
         unsafe {
             let bbox = ffi::gdstk_parse_rs::polygon_ref_get_bounding_box(&*self.inner);
