@@ -298,6 +298,9 @@ namespace gdstk_parse_rs {
     inline const gdstk::Repetition *polygon_ref_get_repetition(const gdstk::Polygon &self) {
         return &self.repetition;
     }
+    inline double polygon_ref_get_signed_area(const gdstk::Polygon &self) {
+        return self.signed_area();
+    }
     // Polygon
     class PolygonOwner {
         public:
@@ -371,6 +374,9 @@ namespace gdstk_parse_rs {
         const PolygonOwner &self
     ) {
         return self.core;
+    }
+    inline double polygon_get_signed_area(const PolygonOwner &self) {
+        return (*self.poly()).signed_area();
     }
     // FlexPath
     inline PolygonArrayTransfer flexpath_to_polygons(const gdstk::FlexPath &self) {
