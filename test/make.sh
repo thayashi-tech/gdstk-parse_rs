@@ -9,3 +9,4 @@ uv run script/pos_filtering.py
 uv run script/repetitions.py
 uv run script/repetitions2.py
 uv run script/transformation.py
+uv run script/figure_transform.py
