@@ -145,6 +145,9 @@ struct Args {
     #[arg(short = 'H', long, default_value_t = 512)]
     height: u32,
 
+    #[arg(short = 't', long, default_value_t = 0)]
+    top_cell: u32,
+
     #[arg(long, default_value_t = false)]
     cell_bounds: bool,
 
@@ -170,7 +173,7 @@ fn main() -> Result<()> {
     let (cells, _) = lib.top_level();
     println!("number of cells {}", cells.len());
     for cell in cells.iter() {
-        println!("cell name {}", cell.name());
+        println!("top cell name {}", cell.name());
     }
     println!("layers");
     for i in 0..lib.count_layernames() {
@@ -183,17 +186,17 @@ fn main() -> Result<()> {
         );
     }
     // draw top level
-    for cell in cells.iter() {
-        draw_polygons(
-            cell,
-            args.width,
-            args.height,
-            args.cell_bounds,
-            args.polygon_bounds,
-        )
-        .save(args.output)
-        .expect("fail to save image");
-        break;
+    let top_cell_index = args.top_cell as usize;
+    if cells.len() <= top_cell_index {
+        return Err(anyhow!("no top cell"));
     }
+    draw_polygons(
+        &cells[top_cell_index],
+        args.width,
+        args.height,
+        args.cell_bounds,
+        args.polygon_bounds,
+    )
+    .save(args.output)?;
     Ok(())
 }
