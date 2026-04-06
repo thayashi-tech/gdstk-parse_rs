@@ -660,6 +660,11 @@ impl<'a> LayerName<'a> {
         }
     }
 }
+pub enum TraverseStatus {
+    Continue,
+    Skip,
+    Finish,
+}
 pub struct Cell<'a> {
     pub(crate) inner: *const ffi::gdstk::Cell,
     pub(crate) _marker: std::marker::PhantomData<&'a ffi::gdstk::Cell>,
@@ -772,8 +777,10 @@ impl<'a> Cell<'a> {
         visitor: &mut V,
         trans: &Vec<Matrix3>,
     ) -> bool {
-        if !visitor.on_start_cell(&self) {
-            return false;
+        match visitor.on_start_cell(&self) {
+            TraverseStatus::Continue => {}
+            TraverseStatus::Skip => return true,
+            TraverseStatus::Finish => return false,
         }
         for i in 0..self.count_polygon_refs() {
             let poly = self.polygon_ref(i);
@@ -795,8 +802,10 @@ impl<'a> Cell<'a> {
                 return false;
             }
         }
-        if !visitor.on_end_cell(&self) {
-            return false;
+        match visitor.on_end_cell(&self) {
+            TraverseStatus::Continue => {}
+            TraverseStatus::Skip => return true,
+            TraverseStatus::Finish => return false,
         }
 
         for i in 0..self.count_references() {
@@ -854,8 +863,8 @@ pub enum ShapeTaverseStatus {
     Finish,
 }
 pub trait ShapeVisitor {
-    fn on_start_cell(&mut self, cell: &Cell) -> bool;
-    fn on_end_cell(&mut self, cell: &Cell) -> bool;
+    fn on_start_cell(&mut self, cell: &Cell) -> TraverseStatus;
+    fn on_end_cell(&mut self, cell: &Cell) -> TraverseStatus;
     fn filter_reference(&mut self, cell: &Cell, trans: Vec<Matrix3>) -> Vec<Matrix3>;
     fn on_polygon(
         &mut self,
@@ -886,11 +895,11 @@ impl<F> ShapeVisitor for CellPolygonVisitor<F>
 where
     F: FnMut(&PolygonRef, &Cell, &Vec<Matrix3>) -> bool,
 {
-    fn on_start_cell(&mut self, _cell: &Cell) -> bool {
-        true
+    fn on_start_cell(&mut self, _cell: &Cell) -> TraverseStatus {
+        TraverseStatus::Continue
     }
-    fn on_end_cell(&mut self, _cell: &Cell) -> bool {
-        true
+    fn on_end_cell(&mut self, _cell: &Cell) -> TraverseStatus {
+        TraverseStatus::Continue
     }
     fn filter_reference(&mut self, _cell: &Cell, trans: Vec<Matrix3>) -> Vec<Matrix3> {
         trans
@@ -986,11 +995,11 @@ impl<F> ShapeVisitor for CellPolygonVisitorWithOverlap<'_, F>
 where
     F: FnMut(&PolygonRef, &Cell, &Vec<Matrix3>) -> bool,
 {
-    fn on_start_cell(&mut self, cell: &Cell) -> bool {
-        true
+    fn on_start_cell(&mut self, cell: &Cell) -> TraverseStatus {
+        TraverseStatus::Continue
     }
-    fn on_end_cell(&mut self, cell: &Cell) -> bool {
-        true
+    fn on_end_cell(&mut self, cell: &Cell) -> TraverseStatus {
+        TraverseStatus::Continue
     }
     fn filter_reference(&mut self, cell: &Cell, trans: Vec<Matrix3>) -> Vec<Matrix3> {
         let area = self.cache.get(cell.id()).expect(&format!(
