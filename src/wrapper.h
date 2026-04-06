@@ -77,7 +77,6 @@ namespace gdstk_parse_rs {
         gdstk::Library core;
         LibraryOwner(gdstk::Library ins):core(ins) {}
         ~LibraryOwner() {
-            core.clear();
             core.free_all();
         }
     };
@@ -120,6 +119,13 @@ namespace gdstk_parse_rs {
     inline const gdstk::LayerName* library_get_layername(const LibraryOwner& self, size_t i) {
         assert(i < self.core.layer_names.count);
         return &self.core.layer_names[i];
+    }
+    inline size_t library_count_cells(const LibraryOwner& self) {
+        return self.core.cell_array.count;
+    }
+    inline gdstk::Cell* library_get_cell_by_index(const LibraryOwner& self, size_t i) {
+        assert(i < self.core.cell_array.count);
+        return self.core.cell_array.items[i];
     }
     // Label
     inline std::string label_get_text(const gdstk::Label& label) {
@@ -421,5 +427,45 @@ namespace gdstk_parse_rs {
             return "";
         }
         return std::string(cell.name);
+    }
+    struct GeometryCacheOwner {
+    public:
+        gdstk::Map<gdstk::GeometryInfo> *core;
+        GeometryCacheOwner() {
+            core = (gdstk::Map<gdstk::GeometryInfo>*)gdstk::allocate_clear(sizeof(gdstk::Map<gdstk::GeometryInfo>));
+            if (!core) {
+                throw std::bad_alloc();
+            }
+        }
+        ~GeometryCacheOwner() {
+            if (core) {
+                for (auto item = core->next(NULL); item; item = core->next(item)) {
+                    if (item) {
+                        item->value.clear();
+                    }
+                }
+                core->clear();
+            }
+        }
+    };
+    inline BoundingBox geometry_cache_get_bounding_box(
+        const GeometryCacheOwner& self,
+        const char *name
+    ) {
+        auto info = self.core->get(name);
+        auto min = info.bounding_box_min;
+        auto max = info.bounding_box_max;
+        return {{min.x, min.y}, {max.x, max.y}};
+    }
+    inline std::unique_ptr<GeometryCacheOwner> library_create_geometry_cache(const LibraryOwner& self) {
+        auto ptr = std::make_unique<GeometryCacheOwner>();
+        assert(ptr->core != nullptr);
+        for (uint64_t i = 0; i < self.core.cell_array.count; i++) {
+            auto cell = self.core.cell_array.items[i];
+            if (cell) {
+                cell->bounding_box(*ptr->core);
+            }
+        }
+        return ptr;
     }
 }

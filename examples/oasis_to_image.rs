@@ -1,12 +1,34 @@
 use anyhow::{anyhow, Result};
 use clap::Parser;
-use gdstk_parse::{ApplyTransform, Cell, GetBoundingBox, Library, Point};
+use gdstk_parse::{
+    ApplyTransform, BoundingBoxCache, Cell, GetBoundingBox, Library, Matrix3, Point, PolygonRef,
+    Rect,
+};
 use image::{Rgba, RgbaImage};
 use imageproc::drawing::Canvas;
 use imageproc::drawing::{draw_line_segment_mut, draw_polygon_mut};
 use imageproc::point::Point as ImgPoint;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::Path;
+
+use image::{codecs::png::PngDecoder, ImageDecoder};
+use std::io::Cursor;
+use std::process;
+
+fn get_image_data(path: &str) -> anyhow::Result<(u32, u32, Vec<u8>)> {
+    let img = std::fs::read(path)?;
+    let img_bytes = img.as_slice();
+    let cursor = Cursor::new(img_bytes);
+    let decoder = PngDecoder::new(cursor)?;
+
+    let (width, height) = decoder.dimensions();
+
+    let mut buf = vec![0; decoder.total_bytes() as usize];
+    decoder.read_image(&mut buf)?;
+
+    Ok((width, height, buf))
+}
 
 struct BlendCanvas<'a>(&'a mut RgbaImage);
 impl<'a> Canvas for BlendCanvas<'a> {
@@ -59,10 +81,10 @@ fn draw_polygons(
     height: u32,
     cell_bounds: bool,
     polygon_bounds: bool,
+    area: Option<Vec<f64>>,
+    cache: Option<BoundingBoxCache>,
 ) -> RgbaImage {
-    let mut rng = SimpleRng::new(42);
-
-    let (min, max) = cell.bounding_box();
+    let (min, max) = cell.bounding_box().min_max();
     let cell_w = max.x - min.x;
     let cell_h = max.y - min.y;
     let cell_size = cell_w.max(cell_h);
@@ -73,10 +95,8 @@ fn draw_polygons(
 
     let scale_x = image_size as f64 / cell_size;
     let scale_y = image_size as f64 / cell_size;
-
     let mut image = RgbaImage::new(width, height);
     image.fill(255);
-    let mut canvas = BlendCanvas(&mut image);
     let mut colors: HashMap<(u32, u32), Rgba<u8>> = HashMap::new();
 
     let point_to_canvas = |p: Point| {
@@ -84,21 +104,29 @@ fn draw_polygons(
         let py = (height as f32) - ((p.y - min.y) * scale_y) as f32;
         (px, py)
     };
-    let draw_area = |canvas: &mut BlendCanvas, area: (Point, Point), color: Rgba<u8>| {
-        let (lb, rt) = area;
+    let canvas = RefCell::new(BlendCanvas(&mut image));
+    let rng = RefCell::new(SimpleRng::new(42));
+
+    let draw_area = |area: Rect| {
+        let (lb, rt) = area.min_max();
         let points = [lb, Point::new(lb.x, rt.y), rt, Point::new(rt.x, lb.y)];
+        let color = rng.borrow_mut().next_rgba();
         for i in 0..4 {
             let s = points[i];
             let e = points[(i + 1) % 4];
-            draw_line_segment_mut(canvas, point_to_canvas(s), point_to_canvas(e), color)
+            draw_line_segment_mut(
+                &mut *canvas.borrow_mut(),
+                point_to_canvas(s),
+                point_to_canvas(e),
+                color,
+            )
         }
     };
-
     let mut count = 0;
-    cell.traverse_polygons(|poly, _cell, trans| {
+    let draw_polygon = |poly: &PolygonRef, _cell: &Cell, trans: &Vec<Matrix3>| {
         let color = *colors
             .entry((poly.layer(), poly.datatype()))
-            .or_insert(rng.next_rgba());
+            .or_insert(rng.borrow_mut().next_rgba());
         let offs = poly.repetition_offsets();
         for t in trans {
             for off in &offs {
@@ -107,26 +135,33 @@ fn draw_polygons(
                     .to_points()
                     .iter()
                     .map(|p| {
-                        let p = p.apply_transform(transform);
+                        let p = p.apply_transform(&transform);
                         let (px, py) = point_to_canvas(p);
                         ImgPoint::new(px as i32, py as i32)
                     })
                     .collect();
                 count += 1;
                 if points.len() >= 3 {
-                    draw_polygon_mut(&mut canvas, &points, color);
+                    draw_polygon_mut(&mut *canvas.borrow_mut(), &points, color);
                 }
             }
             if polygon_bounds {
                 let bbox = poly.bounding_box();
-                let bbox = (bbox.0.apply_transform(*t), bbox.1.apply_transform(*t));
-                draw_area(&mut canvas, bbox, rng.next_rgba());
+                let bbox = bbox.apply_transform(t);
+                draw_area(bbox);
             }
         }
         true
-    });
+    };
+    if let Some(area) = area {
+        let area = Rect::new(Point::new(area[0], area[1]), Point::new(area[2], area[3]));
+        draw_area(area);
+        cell.traverse_polygons_with_overlap_strictly(area, &cache.unwrap(), draw_polygon);
+    } else {
+        cell.traverse_polygons(draw_polygon);
+    }
     if cell_bounds {
-        draw_area(&mut canvas, cell.bounding_box(), rng.next_rgba());
+        draw_area(cell.bounding_box());
     }
     println!("number of polygon is {}", count);
     image
@@ -148,11 +183,17 @@ struct Args {
     #[arg(short = 't', long, default_value_t = 0)]
     top_cell: u32,
 
+    #[arg(short = 'A', long)]
+    answer: Option<String>,
+
     #[arg(long, default_value_t = false)]
     cell_bounds: bool,
 
     #[arg(long, default_value_t = false)]
     polygon_bounds: bool,
+
+    #[arg(long, value_delimiter = ',', num_args = 1)]
+    area: Option<Vec<f64>>,
 }
 
 fn main() -> Result<()> {
@@ -190,13 +231,48 @@ fn main() -> Result<()> {
     if cells.len() <= top_cell_index {
         return Err(anyhow!("no top cell"));
     }
+    let cache = if args.area.is_some() {
+        Some(lib.create_bounding_box_cache())
+    } else {
+        None
+    };
     draw_polygons(
         &cells[top_cell_index],
         args.width,
         args.height,
         args.cell_bounds,
         args.polygon_bounds,
+        args.area,
+        cache,
     )
-    .save(args.output)?;
+    .save(args.output.clone())?;
+
+    if let Some(answer) = args.answer {
+        let (w1, h1, data1) = get_image_data(&args.output)?;
+        let (w2, h2, data2) = get_image_data(&answer)?;
+
+        if w1 != w2 || h1 != h2 {
+            anyhow::bail!("Image dimensions do not match");
+        }
+
+        let mut diff = vec![0; (w1 * h1 * 4) as usize];
+        let options = pixelmatch::Options {
+            threshold: 0.1,
+            ..Default::default()
+        };
+
+        let num_diff_pixels = pixelmatch::pixelmatch(
+            data1.as_slice(),
+            data2.as_slice(),
+            Some(&mut diff),
+            None,
+            None,
+            Some(options),
+        );
+        std::fs::write("diff.png", diff)?;
+        if num_diff_pixels.unwrap() > 0 {
+            process::exit(66);
+        }
+    }
     Ok(())
 }

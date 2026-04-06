@@ -7,6 +7,7 @@
 use autocxx::prelude::*;
 use glam;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::ffi::CString;
 use thiserror::Error;
 
@@ -35,7 +36,7 @@ include_cpp! {
     generate!("gdstk::Tag")
     generate!("gdstk::make_tag")
 
-    // library
+    // Library
     generate!("gdstk_parse_rs::LibraryOwner")
     generate!("gdstk_parse_rs::library_read_gds")
     generate!("gdstk_parse_rs::library_read_oas")
@@ -46,6 +47,9 @@ include_cpp! {
     generate!("gdstk_parse_rs::library_get_precision")
     generate!("gdstk_parse_rs::library_count_layernames")
     generate!("gdstk_parse_rs::library_get_layername")
+    generate!("gdstk_parse_rs::library_create_geometry_cache")
+    generate!("gdstk_parse_rs::library_count_cells")
+    generate!("gdstk_parse_rs::library_get_cell_by_index")
 
     // Label
     generate!("gdstk_parse_rs::label_get_text")
@@ -118,6 +122,10 @@ include_cpp! {
 
     // rawcell
     generate!("gdstk_parse_rs::rawcell_get_name")
+
+    // GeometryCache
+    generate!("gdstk_parse_rs::GeometryCacheOwner")
+    generate!("gdstk_parse_rs::geometry_cache_get_bounding_box")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Error)]
@@ -212,10 +220,10 @@ impl LayerInterval {
     }
 }
 pub trait ApplyTransform {
-    fn apply_transform(&self, trans: Matrix3) -> Self;
+    fn apply_transform(&self, trans: &Matrix3) -> Self;
 }
 impl ApplyTransform for Point {
-    fn apply_transform(&self, trans: Matrix3) -> Self {
+    fn apply_transform(&self, trans: &Matrix3) -> Self {
         let p_homo = Vector3::new(self.x, self.y, 1.0);
         let p = trans * p_homo;
         Point::new(p.x, p.y)
@@ -236,8 +244,59 @@ pub trait ToPolygons {
         }
     }
 }
+#[derive(Debug, Clone, Copy)]
+pub struct Rect {
+    pub min: Point,
+    pub max: Point,
+}
+impl Rect {
+    pub fn new(min: Point, max: Point) -> Self {
+        Self { min, max }
+    }
+    pub fn invalid_new() -> Self {
+        Self {
+            min: Point::new(f64::MAX, f64::MAX),
+            max: Point::new(-f64::MAX, -f64::MAX),
+        }
+    }
+    pub fn expand(&mut self, p: Point) {
+        self.min = Point::new(self.min.x.min(p.x), self.min.y.min(p.y));
+        self.max = Point::new(self.max.x.max(p.x), self.max.y.max(p.y));
+    }
+    pub fn min_max(&self) -> (Point, Point) {
+        (self.min, self.max)
+    }
+    pub fn intersect(&self, other: &Self) -> bool {
+        let (min1, max1) = self.min_max();
+        let (min2, max2) = other.min_max();
+        if max1.x < min2.x || max2.x < min1.x {
+            return false;
+        }
+        if max1.y < min2.y || max2.y < min1.y {
+            return false;
+        }
+        true
+    }
+    pub fn intersect_strictly(&self, other: &Self) -> bool {
+        let (min1, max1) = self.min_max();
+        let (min2, max2) = other.min_max();
+        if max1.x <= min2.x || max2.x <= min1.x {
+            return false;
+        }
+        if max1.y <= min2.y || max2.y <= min1.y {
+            return false;
+        }
+        true
+    }
+}
+impl ApplyTransform for Rect {
+    fn apply_transform(&self, trans: &Matrix3) -> Self {
+        let (min, max) = self.min_max();
+        Rect::new(min.apply_transform(trans), max.apply_transform(trans))
+    }
+}
 pub trait GetBoundingBox {
-    fn bounding_box(&self) -> (Point, Point);
+    fn bounding_box(&self) -> Rect;
 }
 pub struct Polygon {
     pub(crate) inner: UniquePtr<ffi::gdstk_parse_rs::PolygonOwner>,
@@ -333,10 +392,10 @@ impl Polygon {
     }
 }
 impl GetBoundingBox for Polygon {
-    fn bounding_box(&self) -> (Point, Point) {
+    fn bounding_box(&self) -> Rect {
         unsafe {
             let bbox = ffi::gdstk_parse_rs::polygon_get_bounding_box(&*self.inner);
-            (
+            Rect::new(
                 Point::new(bbox.min.x, bbox.min.y),
                 Point::new(bbox.max.x, bbox.max.y),
             )
@@ -436,10 +495,10 @@ impl<'a> PolygonRef<'a> {
 impl<'a> GetBoundingBox for PolygonRef<'a> {
     /// return bounding box
     /// repetitions are taken into account
-    fn bounding_box(&self) -> (Point, Point) {
+    fn bounding_box(&self) -> Rect {
         unsafe {
             let bbox = ffi::gdstk_parse_rs::polygon_ref_get_bounding_box(&*self.inner);
-            (
+            Rect::new(
                 Point::new(bbox.min.x, bbox.min.y),
                 Point::new(bbox.max.x, bbox.max.y),
             )
@@ -474,19 +533,22 @@ impl<'a> Reference<'a> {
         visitor: &mut V,
         trans: &Vec<Matrix3>,
     ) -> bool {
-        let transform = self.transform();
-        let offsets: Vec<_> = self
-            .repetition()
-            .to_offsets()
-            .into_iter()
-            .map(|v| Matrix3::from_translation(v))
-            .collect();
-        let trans2: Vec<_> = trans
-            .iter()
-            .flat_map(|t| offsets.iter().map(move |off| t * off * transform))
-            .collect();
         if let Some(cell) = self.cell() {
-            cell.traverse_shapes_recursive(visitor, &trans2);
+            let transform = self.transform();
+            let offsets: Vec<_> = self
+                .repetition()
+                .to_offsets()
+                .into_iter()
+                .map(|v| Matrix3::from_translation(v))
+                .collect();
+            let trans2: Vec<_> = trans
+                .iter()
+                .flat_map(|t| offsets.iter().map(move |off| t * off * transform))
+                .collect();
+            let trans2 = visitor.filter_reference(&cell, trans2);
+            if trans2.len() > 0 {
+                return cell.traverse_shapes_recursive(visitor, &trans2);
+            }
         }
         true
     }
@@ -558,10 +620,10 @@ impl<'a> Label<'a> {
     }
 }
 impl GetBoundingBox for Label<'_> {
-    fn bounding_box(&self) -> (Point, Point) {
+    fn bounding_box(&self) -> Rect {
         unsafe {
             let bbox = ffi::gdstk_parse_rs::label_get_bounding_box(&*self.inner);
-            (
+            Rect::new(
                 Point::new(bbox.min.x, bbox.min.y),
                 Point::new(bbox.max.x, bbox.max.y),
             )
@@ -608,6 +670,9 @@ impl<'a> Cell<'a> {
             let name_cxx = ffi::gdstk_parse_rs::cell_get_name(&*self.inner);
             name_cxx.to_string_lossy().into_owned()
         }
+    }
+    pub fn id(&self) -> usize {
+        self.inner as usize
     }
     pub fn get_polygons_full(
         &self,
@@ -707,7 +772,9 @@ impl<'a> Cell<'a> {
         visitor: &mut V,
         trans: &Vec<Matrix3>,
     ) -> bool {
-        visitor.on_start_cell(&self);
+        if !visitor.on_start_cell(&self) {
+            return false;
+        }
         for i in 0..self.count_polygon_refs() {
             let poly = self.polygon_ref(i);
             if !visitor.on_polygon(&poly, &self, i, trans) {
@@ -728,7 +795,9 @@ impl<'a> Cell<'a> {
                 return false;
             }
         }
-        visitor.on_end_cell();
+        if !visitor.on_end_cell(&self) {
+            return false;
+        }
 
         for i in 0..self.count_references() {
             if !self.reference(i).traverse_shapes_recursive(visitor, trans) {
@@ -744,10 +813,50 @@ impl<'a> Cell<'a> {
         let mut visitor = CellPolygonVisitor { f };
         self.traverse_shapes(&mut visitor)
     }
+    pub fn traverse_polygons_with_overlap<'b, F>(
+        &self,
+        area: Rect,
+        cache: &'b BoundingBoxCache,
+        mut f: F,
+    ) -> bool
+    where
+        F: FnMut(&PolygonRef, &Cell, &Vec<Matrix3>) -> bool,
+    {
+        let mut visitor = CellPolygonVisitorWithOverlap {
+            f,
+            area,
+            strictly: false,
+            cache,
+        };
+        self.traverse_shapes(&mut visitor)
+    }
+    pub fn traverse_polygons_with_overlap_strictly<'b, F>(
+        &self,
+        area: Rect,
+        cache: &'b BoundingBoxCache,
+        mut f: F,
+    ) -> bool
+    where
+        F: FnMut(&PolygonRef, &Cell, &Vec<Matrix3>) -> bool,
+    {
+        let mut visitor = CellPolygonVisitorWithOverlap {
+            f,
+            area,
+            strictly: true,
+            cache,
+        };
+        self.traverse_shapes(&mut visitor)
+    }
+}
+pub enum ShapeTaverseStatus {
+    Continue,
+    Skip,
+    Finish,
 }
 pub trait ShapeVisitor {
     fn on_start_cell(&mut self, cell: &Cell) -> bool;
-    fn on_end_cell(&mut self) -> bool;
+    fn on_end_cell(&mut self, cell: &Cell) -> bool;
+    fn filter_reference(&mut self, cell: &Cell, trans: Vec<Matrix3>) -> Vec<Matrix3>;
     fn on_polygon(
         &mut self,
         poly: &PolygonRef,
@@ -777,11 +886,14 @@ impl<F> ShapeVisitor for CellPolygonVisitor<F>
 where
     F: FnMut(&PolygonRef, &Cell, &Vec<Matrix3>) -> bool,
 {
-    fn on_start_cell(&mut self, cell: &Cell) -> bool {
+    fn on_start_cell(&mut self, _cell: &Cell) -> bool {
         true
     }
-    fn on_end_cell(&mut self) -> bool {
+    fn on_end_cell(&mut self, _cell: &Cell) -> bool {
         true
+    }
+    fn filter_reference(&mut self, _cell: &Cell, trans: Vec<Matrix3>) -> Vec<Matrix3> {
+        trans
     }
     fn on_polygon(
         &mut self,
@@ -821,11 +933,177 @@ where
         true
     }
 }
+pub struct BoundingBoxCache<'a> {
+    map: HashMap<usize, Rect>,
+    pub(crate) _marker: std::marker::PhantomData<&'a ()>,
+}
+impl<'a> BoundingBoxCache<'a> {
+    fn add(&mut self, id: usize, area: Rect) {
+        self.map.entry(id).or_insert(area);
+    }
+    fn get(&self, id: usize) -> Option<Rect> {
+        self.map.get(&id).copied()
+    }
+}
+fn area_is_overlap(area1: (Point, Point), area2: (Point, Point)) -> bool {
+    let (min1, max1) = area1;
+    let (min2, max2) = area2;
+    if max1.x < min2.x || max2.x < min1.x {
+        return false;
+    }
+    if max1.y < min2.y || max2.y < min1.y {
+        return false;
+    }
+    true
+}
+fn area_is_overlap_strictly(area1: (Point, Point), area2: (Point, Point)) -> bool {
+    let (min1, max1) = area1;
+    let (min2, max2) = area2;
+    if max1.x <= min2.x || max2.x <= min1.x {
+        return false;
+    }
+    if max1.y <= min2.y || max2.y <= min1.y {
+        return false;
+    }
+    true
+}
+struct CellPolygonVisitorWithOverlap<'a, F> {
+    f: F,
+    area: Rect,
+    strictly: bool,
+    cache: &'a BoundingBoxCache<'a>,
+}
+impl<'a, F> CellPolygonVisitorWithOverlap<'a, F> {
+    fn has_intersect(&self, area: &Rect) -> bool {
+        if self.strictly {
+            self.area.intersect(area)
+        } else {
+            self.area.intersect_strictly(area)
+        }
+    }
+}
+impl<F> ShapeVisitor for CellPolygonVisitorWithOverlap<'_, F>
+where
+    F: FnMut(&PolygonRef, &Cell, &Vec<Matrix3>) -> bool,
+{
+    fn on_start_cell(&mut self, cell: &Cell) -> bool {
+        true
+    }
+    fn on_end_cell(&mut self, cell: &Cell) -> bool {
+        true
+    }
+    fn filter_reference(&mut self, cell: &Cell, trans: Vec<Matrix3>) -> Vec<Matrix3> {
+        let area = self.cache.get(cell.id()).expect(&format!(
+            "not found cell id {} ({})",
+            cell.id(),
+            cell.name()
+        ));
+        trans
+            .into_iter()
+            .filter_map(|t| {
+                let area2 = area.apply_transform(&t);
+                if self.has_intersect(&area2) {
+                    Some(t)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+    fn on_polygon(
+        &mut self,
+        poly: &PolygonRef,
+        parent: &Cell,
+        _polygon_index: usize,
+        trans: &Vec<Matrix3>,
+    ) -> bool {
+        let mut bbox = Rect::invalid_new();
+        for p in poly.to_points().into_iter() {
+            bbox.expand(p);
+        }
+        let trans2: Vec<_> = trans
+            .iter()
+            .filter_map(|t| {
+                if self.has_intersect(&bbox.apply_transform(t)) {
+                    Some(*t)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if trans2.len() > 0 {
+            if !(self.f)(poly, parent, &trans2) {
+                return false;
+            }
+        }
+        true
+    }
+    fn on_flexpath(
+        &mut self,
+        flexpath: &FlexPath,
+        parent: &Cell,
+        _flexpath_index: usize,
+        trans: &Vec<Matrix3>,
+    ) -> bool {
+        for polygon in flexpath.to_polygons() {
+            let mut bbox = Rect::invalid_new();
+            for p in polygon.to_points().into_iter() {
+                bbox.expand(p);
+            }
+            let trans2: Vec<_> = trans
+                .iter()
+                .filter_map(|t| {
+                    if self.has_intersect(&bbox.apply_transform(t)) {
+                        Some(*t)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            if trans2.len() > 0 {
+                if !(self.f)(&polygon.to_ref(), parent, &trans2) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+    fn on_robustpath(
+        &mut self,
+        robustpath: &RobustPath,
+        parent: &Cell,
+        _robustpath_index: usize,
+        trans: &Vec<Matrix3>,
+    ) -> bool {
+        for polygon in robustpath.to_polygons() {
+            let mut bbox = Rect::invalid_new();
+            for p in polygon.to_points().into_iter() {
+                bbox.expand(p);
+            }
+            let trans2: Vec<_> = trans
+                .iter()
+                .filter_map(|t| {
+                    if self.has_intersect(&bbox.apply_transform(t)) {
+                        Some(*t)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            if trans2.len() > 0 {
+                if !(self.f)(&polygon.to_ref(), parent, &trans2) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+}
 impl<'a> GetBoundingBox for Cell<'a> {
-    fn bounding_box(&self) -> (Point, Point) {
+    fn bounding_box(&self) -> Rect {
         unsafe {
             let bbox = ffi::gdstk_parse_rs::cell_get_bounding_box(&*self.inner);
-            (
+            Rect::new(
                 Point::new(bbox.min.x, bbox.min.y),
                 Point::new(bbox.max.x, bbox.max.y),
             )
@@ -844,7 +1122,25 @@ impl<'a> RawCell<'a> {
         }
     }
 }
-
+pub struct GeometryCache {
+    pub(crate) inner: UniquePtr<ffi::gdstk_parse_rs::GeometryCacheOwner>,
+}
+impl GeometryCache {
+    pub fn new(ptr: UniquePtr<ffi::gdstk_parse_rs::GeometryCacheOwner>) -> Self {
+        Self { inner: ptr }
+    }
+    pub fn bounding_box(&self, name: &str) -> Rect {
+        unsafe {
+            let cname = CString::new(name).unwrap();
+            let bbox =
+                ffi::gdstk_parse_rs::geometry_cache_get_bounding_box(&*self.inner, cname.as_ptr());
+            Rect::new(
+                Point::new(bbox.min.x, bbox.min.y),
+                Point::new(bbox.max.x, bbox.max.y),
+            )
+        }
+    }
+}
 pub struct Library {
     inner: UniquePtr<ffi::gdstk_parse_rs::LibraryOwner>,
 }
@@ -928,5 +1224,33 @@ impl Library {
     }
     pub fn count_layernames(&self) -> usize {
         unsafe { ffi::gdstk_parse_rs::library_count_layernames(&*self.inner) }
+    }
+    pub fn cell(&self, i: usize) -> Cell<'_> {
+        unsafe {
+            Cell {
+                inner: ffi::gdstk_parse_rs::library_get_cell_by_index(&*self.inner, i),
+                _marker: std::marker::PhantomData,
+            }
+        }
+    }
+    pub fn count_cells(&self) -> usize {
+        unsafe { ffi::gdstk_parse_rs::library_count_cells(&*self.inner) }
+    }
+    pub fn create_bounding_box_cache(&self) -> BoundingBoxCache<'_> {
+        let mut result = BoundingBoxCache {
+            map: HashMap::new(),
+            _marker: std::marker::PhantomData,
+        };
+        let cache = unsafe {
+            GeometryCache::new(ffi::gdstk_parse_rs::library_create_geometry_cache(
+                &*self.inner,
+            ))
+        };
+        for i in 0..self.count_cells() {
+            let cell = self.cell(i);
+            let bbox = cache.bounding_box(&cell.name());
+            result.add(cell.id(), bbox);
+        }
+        result
     }
 }
