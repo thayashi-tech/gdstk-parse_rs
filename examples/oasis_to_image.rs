@@ -123,42 +123,64 @@ fn draw_polygons(
         }
     };
     let mut count = 0;
-    let draw_polygon = |poly: &PolygonRef, _cell: &Cell, trans: &Vec<Matrix3>| {
-        let color = *colors
-            .entry((poly.layer(), poly.datatype()))
-            .or_insert(rng.borrow_mut().next_rgba());
-        let offs = poly.repetition_offsets();
-        for t in trans {
-            for off in &offs {
-                let transform = t * off;
-                let points: Vec<ImgPoint<i32>> = poly
-                    .to_points()
-                    .iter()
+    if let Some(area) = area {
+        let area = Rect::new(Point::new(area[0], area[1]), Point::new(area[2], area[3]));
+        draw_area(area);
+        cell.traverse_polygons_with_overlap_strictly(
+            area,
+            &cache.unwrap(),
+            |points: Vec<Point>, bbox: Rect, poly: &PolygonRef, _cell: &Cell| {
+                let color = *colors
+                    .entry((poly.layer(), poly.datatype()))
+                    .or_insert(rng.borrow_mut().next_rgba());
+                let ipoints: Vec<ImgPoint<i32>> = points
+                    .into_iter()
                     .map(|p| {
-                        let p = p.apply_transform(&transform);
                         let (px, py) = point_to_canvas(p);
                         ImgPoint::new(px as i32, py as i32)
                     })
                     .collect();
                 count += 1;
-                if points.len() >= 3 {
-                    draw_polygon_mut(&mut *canvas.borrow_mut(), &points, color);
+                if ipoints.len() >= 3 {
+                    draw_polygon_mut(&mut *canvas.borrow_mut(), &ipoints, color);
+                }
+                if polygon_bounds {
+                    draw_area(bbox);
+                }
+                true
+            },
+        );
+    } else {
+        cell.traverse_polygons(|poly: &PolygonRef, _cell: &Cell, trans: &Vec<Matrix3>| {
+            let color = *colors
+                .entry((poly.layer(), poly.datatype()))
+                .or_insert(rng.borrow_mut().next_rgba());
+            let offs = poly.repetition_offsets();
+            for t in trans {
+                for off in &offs {
+                    let transform = t * off;
+                    let points: Vec<ImgPoint<i32>> = poly
+                        .to_points()
+                        .iter()
+                        .map(|p| {
+                            let p = p.apply_transform(&transform);
+                            let (px, py) = point_to_canvas(p);
+                            ImgPoint::new(px as i32, py as i32)
+                        })
+                        .collect();
+                    count += 1;
+                    if points.len() >= 3 {
+                        draw_polygon_mut(&mut *canvas.borrow_mut(), &points, color);
+                    }
+                }
+                if polygon_bounds {
+                    let bbox = poly.bounding_box();
+                    let bbox = bbox.apply_transform(t);
+                    draw_area(bbox);
                 }
             }
-            if polygon_bounds {
-                let bbox = poly.bounding_box();
-                let bbox = bbox.apply_transform(t);
-                draw_area(bbox);
-            }
-        }
-        true
-    };
-    if let Some(area) = area {
-        let area = Rect::new(Point::new(area[0], area[1]), Point::new(area[2], area[3]));
-        draw_area(area);
-        cell.traverse_polygons_with_overlap_strictly(area, &cache.unwrap(), draw_polygon);
-    } else {
-        cell.traverse_polygons(draw_polygon);
+            true
+        });
     }
     if cell_bounds {
         draw_area(cell.bounding_box());

@@ -229,6 +229,11 @@ impl ApplyTransform for Point {
         Point::new(p.x, p.y)
     }
 }
+impl ApplyTransform for Vec<Point> {
+    fn apply_transform(&self, trans: &Matrix3) -> Self {
+        self.iter().map(|p| p.apply_transform(trans)).collect()
+    }
+}
 pub trait ToPolygons {
     fn ffi_to_polygons(&self) -> UniquePtr<ffi::gdstk_parse_rs::PolygonArrayTransfer>;
     fn to_polygons(&self) -> Vec<Polygon> {
@@ -297,6 +302,15 @@ impl ApplyTransform for Rect {
 }
 pub trait GetBoundingBox {
     fn bounding_box(&self) -> Rect;
+}
+impl GetBoundingBox for Vec<Point> {
+    fn bounding_box(&self) -> Rect {
+        let mut bbox = Rect::invalid_new();
+        for p in self.iter() {
+            bbox.expand(*p);
+        }
+        bbox
+    }
 }
 pub struct Polygon {
     pub(crate) inner: UniquePtr<ffi::gdstk_parse_rs::PolygonOwner>,
@@ -829,7 +843,7 @@ impl<'a> Cell<'a> {
         mut f: F,
     ) -> bool
     where
-        F: FnMut(&PolygonRef, &Cell, &Vec<Matrix3>) -> bool,
+        F: FnMut(Vec<Point>, Rect, &PolygonRef, &Cell) -> bool,
     {
         let mut visitor = CellPolygonVisitorWithOverlap {
             f,
@@ -846,7 +860,7 @@ impl<'a> Cell<'a> {
         mut f: F,
     ) -> bool
     where
-        F: FnMut(&PolygonRef, &Cell, &Vec<Matrix3>) -> bool,
+        F: FnMut(Vec<Point>, Rect, &PolygonRef, &Cell) -> bool,
     {
         let mut visitor = CellPolygonVisitorWithOverlap {
             f,
@@ -993,7 +1007,7 @@ impl<'a, F> CellPolygonVisitorWithOverlap<'a, F> {
 }
 impl<F> ShapeVisitor for CellPolygonVisitorWithOverlap<'_, F>
 where
-    F: FnMut(&PolygonRef, &Cell, &Vec<Matrix3>) -> bool,
+    F: FnMut(Vec<Point>, Rect, &PolygonRef, &Cell) -> bool,
 {
     fn on_start_cell(&mut self, cell: &Cell) -> TraverseStatus {
         TraverseStatus::Continue
@@ -1026,23 +1040,18 @@ where
         _polygon_index: usize,
         trans: &Vec<Matrix3>,
     ) -> bool {
-        let mut bbox = Rect::invalid_new();
-        for p in poly.to_points().into_iter() {
-            bbox.expand(p);
-        }
-        let trans2: Vec<_> = trans
-            .iter()
-            .filter_map(|t| {
-                if self.has_intersect(&bbox.apply_transform(t)) {
-                    Some(*t)
-                } else {
-                    None
+        let points = poly.to_points();
+        let bbox = points.bounding_box();
+        let offs = poly.repetition_offsets();
+        for t in trans {
+            for off in &offs {
+                let transform = t * off;
+                let bbox2 = bbox.apply_transform(&transform);
+                if self.has_intersect(&bbox2) {
+                    if !(self.f)(points.apply_transform(&transform), bbox2, poly, parent) {
+                        return false;
+                    }
                 }
-            })
-            .collect();
-        if trans2.len() > 0 {
-            if !(self.f)(poly, parent, &trans2) {
-                return false;
             }
         }
         true
@@ -1055,23 +1064,19 @@ where
         trans: &Vec<Matrix3>,
     ) -> bool {
         for polygon in flexpath.to_polygons() {
-            let mut bbox = Rect::invalid_new();
-            for p in polygon.to_points().into_iter() {
-                bbox.expand(p);
-            }
-            let trans2: Vec<_> = trans
-                .iter()
-                .filter_map(|t| {
-                    if self.has_intersect(&bbox.apply_transform(t)) {
-                        Some(*t)
-                    } else {
-                        None
+            let poly = &polygon.to_ref();
+            let points = poly.to_points();
+            let bbox = points.bounding_box();
+            let offs = poly.repetition_offsets();
+            for t in trans {
+                for off in &offs {
+                    let transform = t * off;
+                    let bbox2 = bbox.apply_transform(&transform);
+                    if self.has_intersect(&bbox2) {
+                        if !(self.f)(points.apply_transform(&transform), bbox2, poly, parent) {
+                            return false;
+                        }
                     }
-                })
-                .collect();
-            if trans2.len() > 0 {
-                if !(self.f)(&polygon.to_ref(), parent, &trans2) {
-                    return false;
                 }
             }
         }
@@ -1085,23 +1090,19 @@ where
         trans: &Vec<Matrix3>,
     ) -> bool {
         for polygon in robustpath.to_polygons() {
-            let mut bbox = Rect::invalid_new();
-            for p in polygon.to_points().into_iter() {
-                bbox.expand(p);
-            }
-            let trans2: Vec<_> = trans
-                .iter()
-                .filter_map(|t| {
-                    if self.has_intersect(&bbox.apply_transform(t)) {
-                        Some(*t)
-                    } else {
-                        None
+            let poly = &polygon.to_ref();
+            let points = poly.to_points();
+            let bbox = points.bounding_box();
+            let offs = poly.repetition_offsets();
+            for t in trans {
+                for off in &offs {
+                    let transform = t * off;
+                    let bbox2 = bbox.apply_transform(&transform);
+                    if self.has_intersect(&bbox2) {
+                        if !(self.f)(points.apply_transform(&transform), bbox2, poly, parent) {
+                            return false;
+                        }
                     }
-                })
-                .collect();
-            if trans2.len() > 0 {
-                if !(self.f)(&polygon.to_ref(), parent, &trans2) {
-                    return false;
                 }
             }
         }
@@ -1263,3 +1264,8 @@ impl Library {
         result
     }
 }
+unsafe impl<'a> Sync for Cell<'a> {}
+unsafe impl<'a> Send for Cell<'a> {}
+
+unsafe impl Sync for Library {}
+unsafe impl Send for Library {}
