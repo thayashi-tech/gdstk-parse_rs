@@ -791,7 +791,7 @@ impl<'a> Cell<'a> {
         visitor: &mut V,
         trans: &Vec<Matrix3>,
     ) -> bool {
-        match visitor.on_start_cell(&self) {
+        match visitor.on_cell_start(&self) {
             TraverseStatus::Continue => {}
             TraverseStatus::Skip => return true,
             TraverseStatus::Finish => return false,
@@ -816,16 +816,20 @@ impl<'a> Cell<'a> {
                 return false;
             }
         }
-        match visitor.on_end_cell(&self) {
+        match visitor.on_cell_shape_end(&self) {
             TraverseStatus::Continue => {}
             TraverseStatus::Skip => return true,
             TraverseStatus::Finish => return false,
         }
-
         for i in 0..self.count_references() {
             if !self.reference(i).traverse_shapes_recursive(visitor, trans) {
                 return false;
             }
+        }
+        match visitor.on_cell_end(&self) {
+            TraverseStatus::Continue => {}
+            TraverseStatus::Skip => return true,
+            TraverseStatus::Finish => return false,
         }
         true
     }
@@ -877,30 +881,45 @@ pub enum ShapeTaverseStatus {
     Finish,
 }
 pub trait ShapeVisitor {
-    fn on_start_cell(&mut self, cell: &Cell) -> TraverseStatus;
-    fn on_end_cell(&mut self, cell: &Cell) -> TraverseStatus;
-    fn filter_reference(&mut self, cell: &Cell, trans: Vec<Matrix3>) -> Vec<Matrix3>;
+    fn on_cell_start(&mut self, cell: &Cell) -> TraverseStatus {
+        TraverseStatus::Continue
+    }
+    fn on_cell_shape_end(&mut self, cell: &Cell) -> TraverseStatus {
+        TraverseStatus::Continue
+    }
+    fn on_cell_end(&mut self, cell: &Cell) -> TraverseStatus {
+        TraverseStatus::Continue
+    }
+    fn filter_reference(&mut self, cell: &Cell, trans: Vec<Matrix3>) -> Vec<Matrix3> {
+        trans
+    }
     fn on_polygon(
         &mut self,
         poly: &PolygonRef,
         parent: &Cell,
         polygon_index: usize,
         trans: &Vec<Matrix3>,
-    ) -> bool;
+    ) -> bool {
+        true
+    }
     fn on_flexpath(
         &mut self,
         flexpath: &FlexPath,
         parent: &Cell,
         flexpath_index: usize,
         trans: &Vec<Matrix3>,
-    ) -> bool;
+    ) -> bool {
+        true
+    }
     fn on_robustpath(
         &mut self,
         robustpath: &RobustPath,
         parent: &Cell,
         robustpath_index: usize,
         trans: &Vec<Matrix3>,
-    ) -> bool;
+    ) -> bool {
+        true
+    }
 }
 struct CellPolygonVisitor<F> {
     f: F,
@@ -909,15 +928,6 @@ impl<F> ShapeVisitor for CellPolygonVisitor<F>
 where
     F: FnMut(&PolygonRef, &Cell, &Vec<Matrix3>) -> bool,
 {
-    fn on_start_cell(&mut self, _cell: &Cell) -> TraverseStatus {
-        TraverseStatus::Continue
-    }
-    fn on_end_cell(&mut self, _cell: &Cell) -> TraverseStatus {
-        TraverseStatus::Continue
-    }
-    fn filter_reference(&mut self, _cell: &Cell, trans: Vec<Matrix3>) -> Vec<Matrix3> {
-        trans
-    }
     fn on_polygon(
         &mut self,
         poly: &PolygonRef,
@@ -1009,12 +1019,6 @@ impl<F> ShapeVisitor for CellPolygonVisitorWithOverlap<'_, F>
 where
     F: FnMut(Vec<Point>, Rect, &PolygonRef, &Cell) -> bool,
 {
-    fn on_start_cell(&mut self, cell: &Cell) -> TraverseStatus {
-        TraverseStatus::Continue
-    }
-    fn on_end_cell(&mut self, cell: &Cell) -> TraverseStatus {
-        TraverseStatus::Continue
-    }
     fn filter_reference(&mut self, cell: &Cell, trans: Vec<Matrix3>) -> Vec<Matrix3> {
         let area = self.cache.get(cell.id()).expect(&format!(
             "not found cell id {} ({})",
