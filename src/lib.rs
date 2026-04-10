@@ -297,7 +297,12 @@ impl Rect {
 impl ApplyTransform for Rect {
     fn apply_transform(&self, trans: &Matrix3) -> Self {
         let (min, max) = self.min_max();
-        Rect::new(min.apply_transform(trans), max.apply_transform(trans))
+        let p = min.apply_transform(trans);
+        let q = max.apply_transform(trans);
+        Rect::new(
+            Point::new(p.x.min(q.x), p.y.min(q.y)),
+            Point::new(p.x.max(q.x), p.y.max(q.y)),
+        )
     }
 }
 pub trait GetBoundingBox {
@@ -579,7 +584,7 @@ impl<'a> Reference<'a> {
         }
     }
     fn transform(&self) -> Matrix3 {
-        self.translate() * self.rotation() * self.scale() * self.relfection()
+        self.translate() * self.rotation() * self.scale() * self.reflection()
     }
     fn translate(&self) -> Matrix3 {
         unsafe {
@@ -599,7 +604,7 @@ impl<'a> Reference<'a> {
             Matrix3::from_diagonal(Vector3::new(s, s, 1.0))
         }
     }
-    fn relfection(&self) -> Matrix3 {
+    fn reflection(&self) -> Matrix3 {
         unsafe {
             let x_ref = ffi::gdstk_parse_rs::reference_get_x_reflection(&*self.inner);
             let r1 = if x_ref { -1.0 } else { 1.0 };
