@@ -32,6 +32,7 @@ repetition.cpp
 robustpath.cpp
 style.cpp
 utils.cpp
+clipper_tools.cpp
 "#;
 
     for src in srcs.lines().map(|s| s.trim()).filter(|s| !s.is_empty()) {

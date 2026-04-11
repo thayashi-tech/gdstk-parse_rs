@@ -6,9 +6,10 @@
 
 use autocxx::prelude::*;
 use glam;
-use std::cell::RefCell;
 use std::collections::HashMap;
-use std::ffi::CString;
+use std::ffi::{CString, OsStr};
+use std::os::unix::ffi::OsStrExt;
+use std::path::Path;
 use thiserror::Error;
 
 pub type Point = glam::DVec2;
@@ -22,8 +23,10 @@ include_cpp! {
     // transfer objects
     generate_pod!("gdstk_parse_rs::Point2D")
     generate_pod!("gdstk_parse_rs::BoundingBox")
+    generate_pod!("gdstk_parse_rs::PolygonSlice")
     generate!("gdstk_parse_rs::PolygonArrayTransfer")
     generate!("gdstk_parse_rs::TopLevelResult")
+    generate!("gdstk_parse_rs::PolygonSlice")
     generate_pod!("gdstk_parse_rs::LayerInterval")
 
     // gdstk objects
@@ -35,9 +38,11 @@ include_cpp! {
     generate!("gdstk::ErrorCode")
     generate!("gdstk::Tag")
     generate!("gdstk::make_tag")
+    generate!("gdstk::Operation")
 
     // Library
     generate!("gdstk_parse_rs::LibraryOwner")
+    generate!("gdstk_parse_rs::library_new")
     generate!("gdstk_parse_rs::library_read_gds")
     generate!("gdstk_parse_rs::library_read_oas")
     generate!("gdstk_parse_rs::library_get_top_level")
@@ -50,6 +55,8 @@ include_cpp! {
     generate!("gdstk_parse_rs::library_create_geometry_cache")
     generate!("gdstk_parse_rs::library_count_cells")
     generate!("gdstk_parse_rs::library_get_cell_by_index")
+    generate!("gdstk_parse_rs::library_append_cell")
+    generate!("gdstk_parse_rs::library_write_oas")
 
     // Label
     generate!("gdstk_parse_rs::label_get_text")
@@ -77,11 +84,14 @@ include_cpp! {
     generate!("gdstk_parse_rs::cell_get_robustpath")
     generate!("gdstk_parse_rs::cell_count_labels")
     generate!("gdstk_parse_rs::cell_get_label")
+    generate!("gdstk_parse_rs::cell_append_reference")
+    generate!("gdstk_parse_rs::cell_append_polygon")
 
     // polygon
     generate!("gdstk_parse_rs::PolygonOwner")
     generate!("gdstk_parse_rs::polygon_new")
     generate!("gdstk_parse_rs::polygon_new_from_ref")
+    generate!("gdstk_parse_rs::polygon_new_from_points")
     generate!("gdstk_parse_rs::polygon_copy")
     generate!("gdstk_parse_rs::polygon_translate")
     generate!("gdstk_parse_rs::polygon_scale")
@@ -89,11 +99,15 @@ include_cpp! {
     generate!("gdstk_parse_rs::polygon_rotate")
     generate!("gdstk_parse_rs::polygon_layer")
     generate!("gdstk_parse_rs::polygon_datatype")
+    generate!("gdstk_parse_rs::polygon_set_layer")
+    generate!("gdstk_parse_rs::polygon_set_datatype")
     generate!("gdstk_parse_rs::polygon_foreach_point")
     generate!("gdstk_parse_rs::PointCallback")
     generate!("gdstk_parse_rs::polygon_get_bounding_box")
     generate!("gdstk_parse_rs::polygon_to_ref")
     generate!("gdstk_parse_rs::polygon_get_signed_area")
+    generate!("gdstk_parse_rs::polygon_exec_boolean")
+    generate!("gdstk_parse_rs::polygon_get_boolean_ptr")
 
     // polygon_ref
     generate!("gdstk_parse_rs::polygon_ref_get_bounding_box")
@@ -192,6 +206,64 @@ impl ErrorCode {
         }
     }
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct OasisConfig {
+    property_max_counts: bool,
+    property_top_level: bool,
+    property_bounding_box: bool,
+    property_cell_offset: bool,
+    detect_rectangles: bool,
+    detect_trapezoids: bool,
+    include_crc32: bool,
+    include_checksum32: bool,
+}
+impl OasisConfig {
+    fn to_u16(&self) -> u16 {
+        let mut flag: u16 = 0;
+        if self.property_max_counts {
+            flag |= 0x0001;
+        }
+        if self.property_top_level {
+            flag |= 0x0002;
+        }
+        if self.property_bounding_box {
+            flag |= 0x0004;
+        }
+        if self.property_cell_offset {
+            flag |= 0x0008;
+        }
+        if self.detect_rectangles {
+            flag |= 0x0010;
+        }
+        if self.detect_trapezoids {
+            flag |= 0x0020;
+        }
+        if self.include_crc32 {
+            flag |= 0x0040;
+        }
+        if self.include_checksum32 {
+            flag |= 0x0080;
+        }
+        flag
+    }
+    fn set_standard_properties(&mut self) {
+        self.property_max_counts = true;
+        self.property_top_level = true;
+        self.property_bounding_box = true;
+        self.property_cell_offset = true;
+    }
+    fn set_detect_all(&mut self) {
+        self.detect_rectangles = true;
+        self.detect_trapezoids = true;
+    }
+    fn new() -> Self {
+        let mut config = Self::default();
+        config.set_standard_properties();
+        config.set_detect_all();
+        config
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LayerInterval {
     AllValues,
@@ -249,6 +321,7 @@ pub trait ToPolygons {
         }
     }
 }
+
 #[derive(Debug, Clone, Copy)]
 pub struct Rect {
     pub min: Point,
@@ -293,6 +366,27 @@ impl Rect {
         }
         true
     }
+    pub fn to_points(&self) -> Vec<Point> {
+        let (min, max) = self.min_max();
+        vec![min, Point::new(max.x, min.y), max, Point::new(min.x, max.y)]
+    }
+    pub fn to_array(&self) -> [f64; 4] {
+        [self.min.x, self.min.y, self.max.x, self.max.y]
+    }
+    pub fn from_array(array: [f64; 4]) -> Self {
+        Self {
+            min: Point::new(array[0], array[1]),
+            max: Point::new(array[2], array[3]),
+        }
+    }
+    pub fn width(&self) -> f64 {
+        let (min, max) = self.min_max();
+        max.x - min.x
+    }
+    pub fn height(&self) -> f64 {
+        let (min, max) = self.min_max();
+        max.y - min.y
+    }
 }
 impl ApplyTransform for Rect {
     fn apply_transform(&self, trans: &Matrix3) -> Self {
@@ -327,11 +421,43 @@ where
     let closure = unsafe { &mut *(user_data as *mut F) };
     closure(x, y)
 }
+pub enum BooleanOperation {
+    Or,
+    And,
+    Xor,
+    Not,
+}
+impl BooleanOperation {
+    fn to_ffi(&self) -> ffi::gdstk::Operation {
+        match self {
+            Self::Or => ffi::gdstk::Operation::Or,
+            Self::And => ffi::gdstk::Operation::And,
+            Self::Xor => ffi::gdstk::Operation::Xor,
+            Self::Not => ffi::gdstk::Operation::Not,
+        }
+    }
+}
 impl Polygon {
     pub fn new() -> Self {
         unsafe {
             Self {
                 inner: ffi::gdstk_parse_rs::polygon_new(),
+            }
+        }
+    }
+    pub fn from_points(points: &Vec<Point>, layer: u32, datatype: u32) -> Self {
+        let transfer: Vec<ffi::gdstk_parse_rs::Point2D> = points
+            .iter()
+            .map(|p| ffi::gdstk_parse_rs::Point2D { x: p.x, y: p.y })
+            .collect();
+        unsafe {
+            Self {
+                inner: ffi::gdstk_parse_rs::polygon_new_from_points(
+                    transfer.as_ptr(),
+                    transfer.len(),
+                    layer,
+                    datatype,
+                ),
             }
         }
     }
@@ -407,7 +533,62 @@ impl Polygon {
     /// Polygon area excluding repetitions with sign indicating orientation
     /// (positive for counter clockwise)
     pub fn signed_area(&self) -> f64 {
-        unsafe { unsafe { ffi::gdstk_parse_rs::polygon_get_signed_area(&*self.inner) } }
+        unsafe { ffi::gdstk_parse_rs::polygon_get_signed_area(&*self.inner) }
+    }
+    /// boolean operation (result resolved hole)
+    pub fn exec_batch_boolean(
+        mut a: Vec<*mut ffi::gdstk::Polygon>,
+        mut b: Vec<*mut ffi::gdstk::Polygon>,
+        op: BooleanOperation,
+    ) -> Result<Vec<Self>, ErrorCode> {
+        let a_slice = ffi::gdstk_parse_rs::PolygonSlice {
+            data: a.as_mut_ptr() as usize,
+            count: a.len(),
+        };
+        let b_slice = ffi::gdstk_parse_rs::PolygonSlice {
+            data: b.as_mut_ptr() as usize,
+            count: b.len(),
+        };
+        let scaling = 1024.0;
+        let mut data = unsafe {
+            ffi::gdstk_parse_rs::polygon_exec_boolean(a_slice, b_slice, op.to_ffi(), scaling)
+                .within_unique_ptr()
+        };
+        let ecode = data.error_code();
+        if ecode != ffi::gdstk::ErrorCode::NoError {
+            return Err(ErrorCode::from_ffi(ecode));
+        }
+        let mut pinned = data.pin_mut();
+        let mut polygons = Vec::new();
+        for i in 0..pinned.count() {
+            polygons.push(Self::from_raw(pinned.as_mut().into(i)));
+        }
+        pinned.as_mut().cleanup();
+        Ok(polygons)
+    }
+    pub fn set_layer(&mut self, layer: u32) {
+        unsafe {
+            ffi::gdstk_parse_rs::polygon_set_layer(self.inner.pin_mut(), layer);
+        }
+    }
+    pub fn set_datatype(&mut self, datatype: u32) {
+        unsafe {
+            ffi::gdstk_parse_rs::polygon_set_datatype(self.inner.pin_mut(), datatype);
+        }
+    }
+    pub fn exec_boolean(
+        &self,
+        other: &Polygon,
+        op: BooleanOperation,
+    ) -> Result<Vec<Self>, ErrorCode> {
+        let a: Vec<_> = vec![ffi::gdstk_parse_rs::polygon_get_boolean_ptr(&*self.inner)];
+        let b: Vec<_> = vec![ffi::gdstk_parse_rs::polygon_get_boolean_ptr(&*other.inner)];
+        Self::exec_batch_boolean(a, b, op)
+    }
+    pub fn clip(&self, area: Rect) -> Result<Vec<Self>, ErrorCode> {
+        let clip_points = area.to_points();
+        let clip_points = Polygon::from_points(&clip_points, 0, 0);
+        self.exec_boolean(&clip_points, BooleanOperation::And)
     }
 }
 impl GetBoundingBox for Polygon {
@@ -879,6 +1060,21 @@ impl<'a> Cell<'a> {
         };
         self.traverse_shapes(&mut visitor)
     }
+    fn as_mut(&self) -> *mut ffi::gdstk::Cell {
+        self.inner as *mut _
+    }
+    pub fn append_polygon(&mut self, polygon: &Polygon) {
+        unsafe { ffi::gdstk_parse_rs::cell_append_polygon(self.as_mut(), &*polygon.inner) }
+    }
+    pub fn append_reference(&mut self, other: &Cell) -> Reference<'_> {
+        unsafe {
+            let ptr = ffi::gdstk_parse_rs::cell_append_reference(self.as_mut(), other.as_mut());
+            Reference {
+                inner: ptr,
+                _marker: std::marker::PhantomData,
+            }
+        }
+    }
 }
 pub enum ShapeTaverseStatus {
     Continue,
@@ -1164,6 +1360,22 @@ pub struct Library {
     inner: UniquePtr<ffi::gdstk_parse_rs::LibraryOwner>,
 }
 impl Library {
+    pub fn new(name: &str, unit: f64, precision: f64) -> Result<Self, ErrorCode> {
+        unsafe {
+            let ptr = ffi::gdstk_parse_rs::library_new(
+                CString::new(name)
+                    .map_err(|_| ErrorCode::InsufficientMemory)?
+                    .as_ptr(),
+                unit,
+                precision,
+            );
+            if ptr.is_null() {
+                Err(ErrorCode::InsufficientMemory)
+            } else {
+                Ok(Self { inner: ptr })
+            }
+        }
+    }
     pub fn from_oas(path: &str) -> Result<Self, ErrorCode> {
         let c_path = CString::new(path).map_err(|_| ErrorCode::InputFileOpenError)?;
         unsafe {
@@ -1271,6 +1483,42 @@ impl Library {
             result.add(cell.id(), bbox);
         }
         result
+    }
+    pub fn append_cell(&mut self, name: &str) -> Cell<'_> {
+        let c_name = CString::new(name).unwrap();
+        unsafe {
+            Cell {
+                inner: ffi::gdstk_parse_rs::library_append_cell(
+                    self.inner.pin_mut(),
+                    c_name.as_ptr(),
+                ),
+                _marker: std::marker::PhantomData,
+            }
+        }
+    }
+    pub fn write_oas<P: AsRef<Path>>(
+        &mut self,
+        path: P,
+        compression_level: u8,
+    ) -> Result<(), ErrorCode> {
+        let circle_tolerance = 0.0;
+        let config = OasisConfig::new();
+        let path: &OsStr = path.as_ref().as_os_str();
+        let filename = CString::new(path.as_bytes()).map_err(|_| ErrorCode::OutputFileOpenError)?;
+        let error_code = ErrorCode::from_ffi(unsafe {
+            ffi::gdstk_parse_rs::library_write_oas(
+                self.inner.pin_mut(),
+                filename.as_ptr(),
+                circle_tolerance,
+                compression_level,
+                config.to_u16(),
+            )
+        });
+        if error_code == ErrorCode::NoError {
+            Ok(())
+        } else {
+            Err(error_code)
+        }
     }
 }
 unsafe impl<'a> Sync for Cell<'a> {}

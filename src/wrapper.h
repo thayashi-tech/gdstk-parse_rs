@@ -4,6 +4,8 @@
 #include <utility>
 #include <string>
 #include <iostream>
+#include <cstring>
+#include <cstdlib>
 #include "gdstk/gdstk.hpp"
 
 namespace gdstk_parse_rs {    
@@ -33,14 +35,20 @@ namespace gdstk_parse_rs {
         uint64_t bound_a;
         uint64_t bound_b;
     };
+    struct PolygonSlice {
+        uintptr_t data; // referencee for gdstk::Polygon** (avoid pod error)
+        size_t count;
+    };
     struct PolygonArrayTransfer {
         gdstk::Array<gdstk::Polygon*> data;
+        gdstk::ErrorCode ecode;
         inline size_t count() const { return data.count; }
         inline std::unique_ptr<class PolygonOwner> into(size_t i) { 
             auto ptr = std::make_unique<class PolygonOwner>(data[i]);
             data[i] = nullptr;
             return ptr;
         }
+        inline gdstk::ErrorCode error_code() const { return ecode; }
         inline void cleanup() {
             for (size_t i = 0; i < data.count; ++i) {
                 if (data[i] != nullptr) {
@@ -71,15 +79,33 @@ namespace gdstk_parse_rs {
             rawcells.clear();
         }
     };
+    static char *cstring_dedup(const char *src) {
+        assert(src != nullptr);
+        size_t len = strlen(src) + 1;
+        char *dest = (char*)gdstk::allocate_clear(len);
+        if (!dest) {
+            throw std::bad_alloc();
+        }
+        std::memcpy(dest, src, len);
+        return dest;
+    }
     // library
     struct LibraryOwner {
     public:
         gdstk::Library core;
         LibraryOwner(gdstk::Library ins):core(ins) {}
+        LibraryOwner(const char *name, double unit, double precision):core{} {
+            core.name = cstring_dedup(name);
+            core.unit = unit;
+            core.precision = precision;
+        }
         ~LibraryOwner() {
             core.free_all();
         }
     };
+    inline std::unique_ptr<LibraryOwner> library_new(const char *name, double unit, double precision) {
+        return std::make_unique<LibraryOwner>(name, unit, precision);
+    }
     inline std::unique_ptr<LibraryOwner> library_read_gds(
         const char *filename, double unit, double tolerance, gdstk::ErrorCode* error_code) {
         return std::make_unique<LibraryOwner>(gdstk::read_gds(filename, unit, tolerance, nullptr, error_code));
@@ -126,6 +152,23 @@ namespace gdstk_parse_rs {
     inline gdstk::Cell* library_get_cell_by_index(const LibraryOwner& self, size_t i) {
         assert(i < self.core.cell_array.count);
         return self.core.cell_array.items[i];
+    }
+    inline gdstk::ErrorCode library_write_oas(
+        LibraryOwner& self, const char *filename, double circle_tolerance, 
+        uint8_t compression_level, uint16_t config_flags) {
+        return self.core.write_oas(filename, circle_tolerance, compression_level, config_flags);
+    }
+    inline gdstk::Cell* library_append_cell(
+        LibraryOwner& self,
+        const char *name
+    ) {
+        auto cell = (gdstk::Cell*)gdstk::allocate_clear(sizeof(gdstk::Cell));
+        if (!cell) {
+            throw std::bad_alloc();
+        }
+        cell->name = cstring_dedup(name);
+        self.core.cell_array.append(cell);
+        return cell;
     }
     // Label
     inline std::string label_get_text(const gdstk::Label& label) {
@@ -197,7 +240,7 @@ namespace gdstk_parse_rs {
         bool filter,
         gdstk::Tag tag
     ) {
-        PolygonArrayTransfer result = {.data={}};
+        PolygonArrayTransfer result = {};
         cell.get_polygons(apply_repetitions, include_paths, depth, filter, tag, result.data);
         return result;
     }
@@ -240,6 +283,19 @@ namespace gdstk_parse_rs {
     inline gdstk::Label *cell_get_label(const gdstk::Cell &cell, size_t i) {
         assert(i < cell.label_array.count);
         return cell.label_array[i];
+    }
+    inline gdstk::Reference *cell_append_reference(gdstk::Cell *cell, gdstk::Cell *other) {
+        assert(cell != nullptr);
+        assert(other != nullptr);
+        auto reference = (gdstk::Reference*)gdstk::allocate_clear(sizeof(gdstk::Reference));
+        if (!reference) {
+            throw std::bad_alloc();
+        }
+        reference->type = gdstk::ReferenceType::Cell;
+        reference->cell = other;
+        reference->magnification = 1.0;
+        cell->reference_array.append(reference);
+        return reference;
     }
     // PolygonRef
     inline BoundingBox polygon_ref_get_bounding_box(const gdstk::Polygon &self) {
@@ -338,7 +394,26 @@ namespace gdstk_parse_rs {
     };
     inline std::unique_ptr<PolygonOwner> polygon_new() {
         return std::make_unique<PolygonOwner>();
-    }    
+    }
+    inline std::unique_ptr<PolygonOwner> polygon_new_from_points(
+        const Point2D *points, size_t count, uint32_t layer, uint32_t datatype
+    ) {
+        auto ptr = std::make_unique<PolygonOwner>();
+        ptr->poly()->point_array.ensure_slots(count);
+        for (size_t i = 0; i < count; ++i) {
+            ptr->poly()->point_array.append(gdstk::Vec2{points[i].x, points[i].y});
+        }
+        ptr->poly()->tag = gdstk::make_tag(layer, datatype);
+        return ptr;
+    }
+    inline void polygon_set_layer(PolygonOwner &self, uint32_t layer) {
+        uint32_t datatype = polygon_ref_datatype(*self.poly());
+        self.poly()->tag = gdstk::make_tag(layer, datatype);
+    }
+    inline void polygon_set_datatype(PolygonOwner &self, uint32_t datatype) {
+        uint32_t layer = polygon_ref_layer(*self.poly());
+        self.poly()->tag = gdstk::make_tag(layer, datatype);
+    }
     inline std::unique_ptr<PolygonOwner> polygon_new_from_ref(const gdstk::Polygon *raw) {
         auto ptr = std::make_unique<PolygonOwner>();
         ptr->poly()->copy_from(*raw);
@@ -383,6 +458,40 @@ namespace gdstk_parse_rs {
     }
     inline double polygon_get_signed_area(const PolygonOwner &self) {
         return (*self.poly()).signed_area();
+    }
+    inline gdstk::Polygon *polygon_get_boolean_ptr(const PolygonOwner &self) {
+        return (gdstk::Polygon*)self.poly();
+    }
+    inline PolygonArrayTransfer polygon_exec_boolean(
+        PolygonSlice a,
+        PolygonSlice b,                
+        gdstk::Operation op,
+        double scaling
+    ) {
+        gdstk::Array<gdstk::Polygon*> a_poly{};
+        gdstk::Array<gdstk::Polygon*> b_poly{};
+        
+        a_poly.ensure_slots(a.count);
+        b_poly.ensure_slots(b.count);
+        for (size_t i = 0; i < a.count; ++i) {
+            a_poly.append(reinterpret_cast<gdstk::Polygon**>(a.data)[i]);
+        }
+        for (size_t i = 0; i < b.count; ++i) {
+            b_poly.append(reinterpret_cast<gdstk::Polygon**>(b.data)[i]);
+        }
+        PolygonArrayTransfer results{};
+        results.ecode = gdstk::boolean(a_poly, b_poly, op, scaling, results.data);
+        a_poly.clear();
+        b_poly.clear();
+        return results;
+    }
+    inline void cell_append_polygon(gdstk::Cell *cell, const PolygonOwner &polygon) {
+        auto dup = (gdstk::Polygon*)gdstk::allocate_clear(sizeof(gdstk::Polygon));
+        if (!dup) {
+            throw std::bad_alloc();
+        }
+        dup->copy_from(*polygon.poly());
+        cell->polygon_array.append(dup);
     }
     // FlexPath
     inline PolygonArrayTransfer flexpath_to_polygons(const gdstk::FlexPath &self) {
