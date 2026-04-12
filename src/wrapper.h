@@ -167,8 +167,34 @@ namespace gdstk_parse_rs {
             throw std::bad_alloc();
         }
         cell->name = cstring_dedup(name);
+        if (!cell->name) {
+            gdstk::free_allocation(cell);
+            throw std::bad_alloc();
+        }
         self.core.cell_array.append(cell);
         return cell;
+    }
+    inline gdstk::Reference* library_append_reference(LibraryOwner &self, const char *parent, const char *child) {
+        assert(parent != nullptr);
+        assert(child != nullptr);
+
+        auto parent_cell = library_get_cell(self, parent);
+        if (!parent_cell) {
+            return nullptr;
+        }
+        auto child_cell = library_get_cell(self, child);
+        if (!child_cell) {
+            return nullptr;
+        }
+        auto reference = (gdstk::Reference*)gdstk::allocate_clear(sizeof(gdstk::Reference));
+        if (!reference) {
+            throw std::bad_alloc();
+        }
+        reference->type = gdstk::ReferenceType::Cell;
+        reference->cell = child_cell;
+        reference->magnification = 1.0;
+        parent_cell->reference_array.append(reference);
+        return reference;
     }
     // Label
     inline std::string label_get_text(const gdstk::Label& label) {
@@ -283,19 +309,6 @@ namespace gdstk_parse_rs {
     inline gdstk::Label *cell_get_label(const gdstk::Cell &cell, size_t i) {
         assert(i < cell.label_array.count);
         return cell.label_array[i];
-    }
-    inline gdstk::Reference *cell_append_reference(gdstk::Cell *cell, gdstk::Cell *other) {
-        assert(cell != nullptr);
-        assert(other != nullptr);
-        auto reference = (gdstk::Reference*)gdstk::allocate_clear(sizeof(gdstk::Reference));
-        if (!reference) {
-            throw std::bad_alloc();
-        }
-        reference->type = gdstk::ReferenceType::Cell;
-        reference->cell = other;
-        reference->magnification = 1.0;
-        cell->reference_array.append(reference);
-        return reference;
     }
     // PolygonRef
     inline BoundingBox polygon_ref_get_bounding_box(const gdstk::Polygon &self) {

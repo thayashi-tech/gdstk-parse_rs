@@ -57,6 +57,7 @@ include_cpp! {
     generate!("gdstk_parse_rs::library_get_cell_by_index")
     generate!("gdstk_parse_rs::library_append_cell")
     generate!("gdstk_parse_rs::library_write_oas")
+    generate!("gdstk_parse_rs::library_append_reference")
 
     // Label
     generate!("gdstk_parse_rs::label_get_text")
@@ -84,7 +85,6 @@ include_cpp! {
     generate!("gdstk_parse_rs::cell_get_robustpath")
     generate!("gdstk_parse_rs::cell_count_labels")
     generate!("gdstk_parse_rs::cell_get_label")
-    generate!("gdstk_parse_rs::cell_append_reference")
     generate!("gdstk_parse_rs::cell_append_polygon")
 
     // polygon
@@ -180,6 +180,10 @@ pub enum ErrorCode {
     ZlibError,
     #[error("unknown: {0}")]
     Unknown(i32),
+
+    // additional
+    #[error("missing cell")]
+    MissingCell,
 }
 
 impl ErrorCode {
@@ -1066,15 +1070,6 @@ impl<'a> Cell<'a> {
     pub fn append_polygon(&mut self, polygon: &Polygon) {
         unsafe { ffi::gdstk_parse_rs::cell_append_polygon(self.as_mut(), &*polygon.inner) }
     }
-    pub fn append_reference(&mut self, other: &Cell) -> Reference<'_> {
-        unsafe {
-            let ptr = ffi::gdstk_parse_rs::cell_append_reference(self.as_mut(), other.as_mut());
-            Reference {
-                inner: ptr,
-                _marker: std::marker::PhantomData,
-            }
-        }
-    }
 }
 pub enum ShapeTaverseStatus {
     Continue,
@@ -1472,6 +1467,7 @@ impl Library {
             map: HashMap::new(),
             _marker: std::marker::PhantomData,
         };
+
         let cache = unsafe {
             GeometryCache::new(ffi::gdstk_parse_rs::library_create_geometry_cache(
                 &*self.inner,
@@ -1493,6 +1489,27 @@ impl Library {
                     c_name.as_ptr(),
                 ),
                 _marker: std::marker::PhantomData,
+            }
+        }
+    }
+    pub fn append_reference(
+        &mut self,
+        parent: &str,
+        child: &str,
+    ) -> Result<Reference<'_>, ErrorCode> {
+        unsafe {
+            let ptr = ffi::gdstk_parse_rs::library_append_reference(
+                self.inner.pin_mut(),
+                CString::new(parent).unwrap().as_ptr(),
+                CString::new(child).unwrap().as_ptr(),
+            );
+            if ptr.is_null() {
+                Err(ErrorCode::MissingCell)
+            } else {
+                Ok(Reference {
+                    inner: ptr,
+                    _marker: std::marker::PhantomData,
+                })
             }
         }
     }

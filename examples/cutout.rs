@@ -78,13 +78,7 @@ fn main() -> Result<()> {
             }
         }
     }
-    /*
-    {
-        let poly_cell = wlib.get_cell("polygon");
-        let mut main_cell = wlib.append_cell("main_cell");
-        main_cell.append_reference(&poly_cell);
-    }
-     */
+
     wlib.write_oas(&args.output, 6)?;
     Ok(())
 }
