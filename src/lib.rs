@@ -981,7 +981,7 @@ impl<'a> Cell<'a> {
         visitor: &mut V,
         trans: &Vec<Matrix3>,
     ) -> bool {
-        match visitor.on_cell_start(&self) {
+        match visitor.on_cell_start(&self, trans) {
             TraverseStatus::Continue => {}
             TraverseStatus::Skip => return true,
             TraverseStatus::Finish => return false,
@@ -1077,7 +1077,7 @@ pub enum ShapeTaverseStatus {
     Finish,
 }
 pub trait ShapeVisitor {
-    fn on_cell_start(&mut self, cell: &Cell) -> TraverseStatus {
+    fn on_cell_start(&mut self, cell: &Cell, trans: &Vec<Matrix3>) -> TraverseStatus {
         TraverseStatus::Continue
     }
     fn on_cell_shape_end(&mut self, cell: &Cell) -> TraverseStatus {
