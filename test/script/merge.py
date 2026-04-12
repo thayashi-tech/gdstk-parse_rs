@@ -26,7 +26,7 @@ def make_second_lib(filename):
 
 
 if __name__ == "__main__":
-    path = pathlib.Path(__file__).parent.parent.absolute() / "output"
+    path = pathlib.Path(__file__).parent.parent.absolute() / "testdata"
 
     # First we create the two libraries we'll be merging
     make_first_lib(path / "lib1.gds")

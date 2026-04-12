@@ -3,7 +3,7 @@ import gdstk
 
 
 if __name__ == "__main__":
-    path = pathlib.Path(__file__).parent.parent.absolute() / "output"
+    path = pathlib.Path(__file__).parent.parent.absolute() / "testdata"
 
     unit = gdstk.Cell("Unit")
     unit.add(gdstk.cross((0, 0), 1, 0.2))

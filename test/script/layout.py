@@ -5,7 +5,7 @@ import pcell
 
 
 if __name__ == "__main__":
-    path = pathlib.Path(__file__).parent.parent.absolute() / "output"
+    path = pathlib.Path(__file__).parent.parent.absolute() / "testdata"
 
     # Check library units. In this case it is using the default units.
     units = gdstk.gds_units(path / "photonics.gds")

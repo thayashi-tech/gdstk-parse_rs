@@ -45,5 +45,5 @@ if __name__ == "__main__":
     main.add(gdstk.Reference(grat1, (length, 0), rotation=numpy.pi / 2))
     main.add(gdstk.Reference(grat2, (150 - length, 0), rotation=-numpy.pi / 2))
 
-    path = pathlib.Path(__file__).parent.parent.absolute() / "output"
+    path = pathlib.Path(__file__).parent.parent.absolute() / "testdata"
     lib.write_gds(path / "pcell.gds")

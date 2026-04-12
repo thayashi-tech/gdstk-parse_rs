@@ -29,5 +29,5 @@ if __name__ == "__main__":
 
     lib = gdstk.Library()
     lib.add(main, *main.dependencies(True))
-    path = pathlib.Path(__file__).parent.parent.absolute() / "output"
+    path = pathlib.Path(__file__).parent.parent.absolute() / "testdata"
     lib.write_oas(path / "transformation.oas")

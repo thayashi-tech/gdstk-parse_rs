@@ -41,6 +41,6 @@ if __name__ == "__main__":
     directional_coupler(lib)
     mach_zehnder_interferometer(lib)
 
-    path = pathlib.Path(__file__).parent.parent.absolute() / "output"
+    path = pathlib.Path(__file__).parent.parent.absolute() / "testdata"
     lib.write_gds(path / "photonics.gds")
     lib.write_oas(path / "photonics.oas")
