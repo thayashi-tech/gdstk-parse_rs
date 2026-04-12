@@ -567,6 +567,8 @@ namespace gdstk_parse_rs {
                     }
                 }
                 core->clear();
+                gdstk::free_allocation(core);
+                core = nullptr;
             }
         }
     };
