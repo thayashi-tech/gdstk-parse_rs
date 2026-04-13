@@ -35,9 +35,8 @@ def test_image_to_oasis_area():
         subprocess.run(cmd)
 
 
-def test_image_to_oasis():
-    # all
-    input_file = f"{DATADIR}/figure_transform.oas"
+def test_image_to_oasis_inner(filename: str, topcell: int):
+    input_file = f"{DATADIR}/{filename}"
     input = Path(input_file).stem
     cmd = [
         O2I,
@@ -45,12 +44,23 @@ def test_image_to_oasis():
         "--cell-bounds",
         "--polygon-bounds",
         "--top-cell",
-        "0",
+        f"{topcell}",
         "-o",
         f"{OUTPUT}/io2_{input}_all.png",
     ]
     print(" ".join(cmd))
     subprocess.run(cmd)
+
+
+def test_image_to_oasis():
+    # all
+    test_image_to_oasis_inner("figure_transform.oas", 0)
+    test_image_to_oasis_inner("photonics.oas", 1)
+    test_image_to_oasis_inner("layout.oas", 0)
+    test_image_to_oasis_inner("points_along_path.oas", 0)
+    test_image_to_oasis_inner("transformation.oas", 0)
+    test_image_to_oasis_inner("transformation2.oas", 0)
+    test_image_to_oasis_inner("connection_pads.oas", 0)
 
 
 def test_cutout_area(do_clip: bool = False):

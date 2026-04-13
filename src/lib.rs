@@ -1173,6 +1173,9 @@ impl<'a> BoundingBoxCache<'a> {
     fn get(&self, id: usize) -> Option<Rect> {
         self.map.get(&id).copied()
     }
+    fn get_raw(&self) -> HashMap<usize, Rect> {
+        self.map.clone()
+    }
 }
 fn area_is_overlap(area1: (Point, Point), area2: (Point, Point)) -> bool {
     let (min1, max1) = area1;
@@ -1202,14 +1205,130 @@ struct CellPolygonVisitorWithOverlap<'a, F> {
     strictly: bool,
     cache: &'a BoundingBoxCache<'a>,
 }
-impl<'a, F> CellPolygonVisitorWithOverlap<'a, F> {
-    fn has_intersect(&self, area: &Rect) -> bool {
-        if self.strictly {
-            self.area.intersect(area)
-        } else {
-            self.area.intersect_strictly(area)
+pub fn filter_overlapped_reference(
+    target_area: &Rect,
+    is_strictly: bool,
+    area: &Rect,
+    trans: Vec<Matrix3>,
+) -> Vec<Matrix3> {
+    trans
+        .into_iter()
+        .filter_map(|t| {
+            let area2 = area.apply_transform(&t);
+            let is_intersect = if is_strictly {
+                target_area.intersect_strictly(&area2)
+            } else {
+                target_area.intersect(&area2)
+            };
+            if is_intersect {
+                Some(t)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+pub fn filter_overlapped_polygon<F>(
+    mut f: F,
+    target_area: &Rect,
+    is_strictly: bool,
+    poly: &PolygonRef,
+    parent: &Cell,
+    trans: &Vec<Matrix3>,
+) -> bool
+where
+    F: FnMut(Vec<Point>, Rect, &PolygonRef, &Cell) -> bool,
+{
+    let points = poly.to_points();
+    let bbox = points.bounding_box();
+    let offs = poly.repetition_offsets();
+    for t in trans {
+        for off in &offs {
+            let transform = t * off;
+            let bbox2 = bbox.apply_transform(&transform);
+            let is_intersect = if is_strictly {
+                target_area.intersect_strictly(&bbox2)
+            } else {
+                target_area.intersect(&bbox2)
+            };
+            if is_intersect {
+                if !f(points.apply_transform(&transform), bbox2, poly, parent) {
+                    return false;
+                }
+            }
         }
     }
+    true
+}
+pub fn filter_overlapped_flexpath_polygon<F>(
+    mut f: F,
+    target_area: &Rect,
+    is_strictly: bool,
+    flexpath: &FlexPath,
+    parent: &Cell,
+    trans: &Vec<Matrix3>,
+) -> bool
+where
+    F: FnMut(Vec<Point>, Rect, &PolygonRef, &Cell) -> bool,
+{
+    for polygon in flexpath.to_polygons() {
+        let poly = &polygon.to_ref();
+        let points = poly.to_points();
+        let bbox = points.bounding_box();
+        let offs = poly.repetition_offsets();
+        for t in trans {
+            for off in &offs {
+                let transform = t * off;
+                let bbox2 = bbox.apply_transform(&transform);
+                let is_intersect = if is_strictly {
+                    target_area.intersect_strictly(&bbox2)
+                } else {
+                    target_area.intersect(&bbox2)
+                };
+                if is_intersect {
+                    if !f(points.apply_transform(&transform), bbox2, poly, parent) {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+    true
+}
+pub fn filter_overlapped_robustpath_polygon<F>(
+    mut f: F,
+    target_area: &Rect,
+    is_strictly: bool,
+    robustpath: &RobustPath,
+    parent: &Cell,
+    trans: &Vec<Matrix3>,
+) -> bool
+where
+    F: FnMut(Vec<Point>, Rect, &PolygonRef, &Cell) -> bool,
+{
+    for polygon in robustpath.to_polygons() {
+        let poly = &polygon.to_ref();
+        let points = poly.to_points();
+        let bbox = points.bounding_box();
+        let offs = poly.repetition_offsets();
+        for t in trans {
+            for off in &offs {
+                let transform = t * off;
+                let bbox2 = bbox.apply_transform(&transform);
+                let is_intersect = if is_strictly {
+                    target_area.intersect_strictly(&bbox2)
+                } else {
+                    target_area.intersect(&bbox2)
+                };
+                if is_intersect {
+                    if !f(points.apply_transform(&transform), bbox2, poly, parent) {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+    true
 }
 impl<F> ShapeVisitor for CellPolygonVisitorWithOverlap<'_, F>
 where
@@ -1221,17 +1340,7 @@ where
             cell.id(),
             cell.name()
         ));
-        trans
-            .into_iter()
-            .filter_map(|t| {
-                let area2 = area.apply_transform(&t);
-                if self.has_intersect(&area2) {
-                    Some(t)
-                } else {
-                    None
-                }
-            })
-            .collect()
+        filter_overlapped_reference(&self.area, self.strictly, &area, trans)
     }
     fn on_polygon(
         &mut self,
@@ -1240,21 +1349,14 @@ where
         _polygon_index: usize,
         trans: &Vec<Matrix3>,
     ) -> bool {
-        let points = poly.to_points();
-        let bbox = points.bounding_box();
-        let offs = poly.repetition_offsets();
-        for t in trans {
-            for off in &offs {
-                let transform = t * off;
-                let bbox2 = bbox.apply_transform(&transform);
-                if self.has_intersect(&bbox2) {
-                    if !(self.f)(points.apply_transform(&transform), bbox2, poly, parent) {
-                        return false;
-                    }
-                }
-            }
-        }
-        true
+        filter_overlapped_polygon(
+            |a, b, c, d| (self.f)(a, b, c, d),
+            &self.area,
+            self.strictly,
+            poly,
+            parent,
+            trans,
+        )
     }
     fn on_flexpath(
         &mut self,
@@ -1263,24 +1365,14 @@ where
         _flexpath_index: usize,
         trans: &Vec<Matrix3>,
     ) -> bool {
-        for polygon in flexpath.to_polygons() {
-            let poly = &polygon.to_ref();
-            let points = poly.to_points();
-            let bbox = points.bounding_box();
-            let offs = poly.repetition_offsets();
-            for t in trans {
-                for off in &offs {
-                    let transform = t * off;
-                    let bbox2 = bbox.apply_transform(&transform);
-                    if self.has_intersect(&bbox2) {
-                        if !(self.f)(points.apply_transform(&transform), bbox2, poly, parent) {
-                            return false;
-                        }
-                    }
-                }
-            }
-        }
-        true
+        filter_overlapped_flexpath_polygon(
+            |a, b, c, d| (self.f)(a, b, c, d),
+            &self.area,
+            self.strictly,
+            flexpath,
+            parent,
+            trans,
+        )
     }
     fn on_robustpath(
         &mut self,
@@ -1289,24 +1381,14 @@ where
         _robustpath_index: usize,
         trans: &Vec<Matrix3>,
     ) -> bool {
-        for polygon in robustpath.to_polygons() {
-            let poly = &polygon.to_ref();
-            let points = poly.to_points();
-            let bbox = points.bounding_box();
-            let offs = poly.repetition_offsets();
-            for t in trans {
-                for off in &offs {
-                    let transform = t * off;
-                    let bbox2 = bbox.apply_transform(&transform);
-                    if self.has_intersect(&bbox2) {
-                        if !(self.f)(points.apply_transform(&transform), bbox2, poly, parent) {
-                            return false;
-                        }
-                    }
-                }
-            }
-        }
-        true
+        filter_overlapped_robustpath_polygon(
+            |a, b, c, d| (self.f)(a, b, c, d),
+            &self.area,
+            self.strictly,
+            robustpath,
+            parent,
+            trans,
+        )
     }
 }
 impl<'a> GetBoundingBox for Cell<'a> {
