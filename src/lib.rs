@@ -738,17 +738,7 @@ impl<'a> Reference<'a> {
         trans: &Vec<Matrix3>,
     ) -> bool {
         if let Some(cell) = self.cell() {
-            let transform = self.transform();
-            let offsets: Vec<_> = self
-                .repetition()
-                .to_offsets()
-                .into_iter()
-                .map(|v| Matrix3::from_translation(v))
-                .collect();
-            let trans2: Vec<_> = trans
-                .iter()
-                .flat_map(|t| offsets.iter().map(move |off| t * off * transform))
-                .collect();
+            let trans2 = self.reference_transforms(trans);
             let trans2 = visitor.filter_reference(&cell, trans2);
             if trans2.len() > 0 {
                 return cell.traverse_shapes_recursive(visitor, &trans2);
@@ -756,7 +746,20 @@ impl<'a> Reference<'a> {
         }
         true
     }
-    fn cell(&self) -> Option<Cell<'_>> {
+    pub fn reference_transforms(&self, trans: &Vec<Matrix3>) -> Vec<Matrix3> {
+        let transform = self.transform();
+        let offsets: Vec<_> = self
+            .repetition()
+            .to_offsets()
+            .into_iter()
+            .map(|v| Matrix3::from_translation(v))
+            .collect();
+        trans
+            .iter()
+            .flat_map(|t| offsets.iter().map(move |off| t * off * transform))
+            .collect()
+    }
+    pub fn cell(&self) -> Option<Cell<'_>> {
         unsafe {
             let ptr = ffi::gdstk_parse_rs::reference_get_cell(&*self.inner);
             if ptr.is_null() {
@@ -768,28 +771,28 @@ impl<'a> Reference<'a> {
             })
         }
     }
-    fn transform(&self) -> Matrix3 {
+    pub fn transform(&self) -> Matrix3 {
         self.translate() * self.rotation() * self.scale() * self.reflection()
     }
-    fn translate(&self) -> Matrix3 {
+    pub fn translate(&self) -> Matrix3 {
         unsafe {
             let p = ffi::gdstk_parse_rs::reference_get_translate(&*self.inner);
             Matrix3::from_translation(Vector::new(p.x, p.y))
         }
     }
-    fn rotation(&self) -> Matrix3 {
+    pub fn rotation(&self) -> Matrix3 {
         unsafe {
             let rad = ffi::gdstk_parse_rs::reference_get_rotation(&*self.inner);
             Matrix3::from_rotation_z(rad)
         }
     }
-    fn scale(&self) -> Matrix3 {
+    pub fn scale(&self) -> Matrix3 {
         unsafe {
             let s = ffi::gdstk_parse_rs::reference_get_scale(&*self.inner);
             Matrix3::from_diagonal(Vector3::new(s, s, 1.0))
         }
     }
-    fn reflection(&self) -> Matrix3 {
+    pub fn reflection(&self) -> Matrix3 {
         unsafe {
             let x_ref = ffi::gdstk_parse_rs::reference_get_x_reflection(&*self.inner);
             let r1 = if x_ref { -1.0 } else { 1.0 };
@@ -1006,7 +1009,7 @@ impl<'a> Cell<'a> {
                 return false;
             }
         }
-        match visitor.on_cell_shape_end(&self) {
+        match visitor.on_cell_shape_end(&self, trans) {
             TraverseStatus::Continue => {}
             TraverseStatus::Skip => return true,
             TraverseStatus::Finish => return false,
@@ -1016,7 +1019,7 @@ impl<'a> Cell<'a> {
                 return false;
             }
         }
-        match visitor.on_cell_end(&self) {
+        match visitor.on_cell_end(&self, trans) {
             TraverseStatus::Continue => {}
             TraverseStatus::Skip => return true,
             TraverseStatus::Finish => return false,
@@ -1080,10 +1083,10 @@ pub trait ShapeVisitor {
     fn on_cell_start(&mut self, cell: &Cell, trans: &Vec<Matrix3>) -> TraverseStatus {
         TraverseStatus::Continue
     }
-    fn on_cell_shape_end(&mut self, cell: &Cell) -> TraverseStatus {
+    fn on_cell_shape_end(&mut self, cell: &Cell, trans: &Vec<Matrix3>) -> TraverseStatus {
         TraverseStatus::Continue
     }
-    fn on_cell_end(&mut self, cell: &Cell) -> TraverseStatus {
+    fn on_cell_end(&mut self, cell: &Cell, trans: &Vec<Matrix3>) -> TraverseStatus {
         TraverseStatus::Continue
     }
     fn filter_reference(&mut self, cell: &Cell, trans: Vec<Matrix3>) -> Vec<Matrix3> {

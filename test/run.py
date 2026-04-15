@@ -2,7 +2,7 @@
 import subprocess
 from pathlib import Path
 
-RELEASE = "debug"
+RELEASE = "release"
 O2I = f"../target/{RELEASE}/examples/oasis_to_image"
 CUTOUT = f"../target/{RELEASE}/examples/cutout"
 DATADIR = "testdata"
