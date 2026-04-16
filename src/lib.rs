@@ -142,7 +142,7 @@ include_cpp! {
     generate!("gdstk_parse_rs::geometry_cache_get_bounding_box")
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Error)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Error)]
 pub enum ErrorCode {
     #[error("no error")]
     NoError,
@@ -184,6 +184,10 @@ pub enum ErrorCode {
     // additional
     #[error("missing cell")]
     MissingCell,
+    #[error("traverse error")]
+    TraverseError(String),
+    #[error("traverse abort")]
+    TraverseAbort,
 }
 
 impl ErrorCode {
@@ -736,12 +740,12 @@ impl<'a> Reference<'a> {
         &self,
         visitor: &mut V,
         trans: &Vec<Matrix3>,
-    ) -> bool {
+    ) -> Result<(), ErrorCode> {
         if let Some(cell) = self.cell() {
             let trans2 = self.reference_transforms(trans);
             return cell.traverse_shapes_recursive(visitor, trans2);
         }
-        true
+        Ok(())
     }
     pub fn reference_transforms(&self, trans: &Vec<Matrix3>) -> Vec<Matrix3> {
         let transform = self.transform();
@@ -864,11 +868,6 @@ impl<'a> LayerName<'a> {
         }
     }
 }
-pub enum TraverseStatus {
-    Continue,
-    Skip,
-    Finish,
-}
 pub struct Cell<'a> {
     pub(crate) inner: *const ffi::gdstk::Cell,
     pub(crate) _marker: std::marker::PhantomData<&'a ffi::gdstk::Cell>,
@@ -972,7 +971,7 @@ impl<'a> Cell<'a> {
             }
         }
     }
-    pub fn traverse_shapes<V: ShapeVisitor>(&self, visitor: &mut V) -> bool {
+    pub fn traverse_shapes<V: ShapeVisitor>(&self, visitor: &mut V) -> Result<(), ErrorCode> {
         let trans = vec![Matrix3::IDENTITY];
         self.traverse_shapes_recursive(visitor, trans)
     }
@@ -980,49 +979,38 @@ impl<'a> Cell<'a> {
         &self,
         visitor: &mut V,
         trans: Vec<Matrix3>,
-    ) -> bool {
-        let trans = visitor.on_cell_start(&self, trans);
+    ) -> Result<(), ErrorCode> {
+        let trans = visitor.on_cell_start(&self, trans)?;
         for i in 0..self.count_polygon_refs() {
             let poly = self.polygon_ref(i);
-            if !visitor.on_polygon(&poly, &self, i, &trans) {
-                return false;
-            }
+            visitor.on_polygon(&poly, &self, i, &trans)?;
         }
         if trans.is_empty() {
-            return true;
+            return Ok(());
         }
         // flexpath
         for i in 0..self.count_flexpaths() {
             let path = self.flexpath(i);
-            if !visitor.on_flexpath(&path, &self, i, &trans) {
-                return false;
-            }
+            visitor.on_flexpath(&path, &self, i, &trans)?;
         }
         // robustpath
         for i in 0..self.count_robustpaths() {
             let path = self.robustpath(i);
-            if !visitor.on_robustpath(&path, &self, i, &trans) {
-                return false;
-            }
+            visitor.on_robustpath(&path, &self, i, &trans)?;
         }
-        let trans = visitor.on_cell_shape_end(&self, trans);
+        let trans = visitor.on_cell_shape_end(&self, trans)?;
         if !trans.is_empty() {
             for i in 0..self.count_references() {
-                if !self.reference(i).traverse_shapes_recursive(visitor, &trans) {
-                    return false;
-                }
+                self.reference(i)
+                    .traverse_shapes_recursive(visitor, &trans)?;
             }
         }
-        match visitor.on_cell_end(&self, trans) {
-            TraverseStatus::Continue => {}
-            TraverseStatus::Skip => return true,
-            TraverseStatus::Finish => return false,
-        }
-        true
+        visitor.on_cell_end(&self, trans)?;
+        Ok(())
     }
-    pub fn traverse_polygons<F>(&self, mut f: F) -> bool
+    pub fn traverse_polygons<F>(&self, mut f: F) -> Result<(), ErrorCode>
     where
-        F: FnMut(&PolygonRef, &Cell, &Vec<Matrix3>) -> bool,
+        F: FnMut(&PolygonRef, &Cell, &Vec<Matrix3>) -> Result<(), ErrorCode>,
     {
         let mut visitor = CellPolygonVisitor { f };
         self.traverse_shapes(&mut visitor)
@@ -1032,9 +1020,9 @@ impl<'a> Cell<'a> {
         area: Rect,
         cache: &'b BoundingBoxCache,
         mut f: F,
-    ) -> bool
+    ) -> Result<(), ErrorCode>
     where
-        F: FnMut(Vec<Point>, Rect, &PolygonRef, &Cell) -> bool,
+        F: FnMut(Vec<Point>, Rect, &PolygonRef, &Cell) -> Result<(), ErrorCode>,
     {
         let mut visitor = CellPolygonVisitorWithOverlap {
             f,
@@ -1049,9 +1037,9 @@ impl<'a> Cell<'a> {
         area: Rect,
         cache: &'b BoundingBoxCache,
         mut f: F,
-    ) -> bool
+    ) -> Result<(), ErrorCode>
     where
-        F: FnMut(Vec<Point>, Rect, &PolygonRef, &Cell) -> bool,
+        F: FnMut(Vec<Point>, Rect, &PolygonRef, &Cell) -> Result<(), ErrorCode>,
     {
         let mut visitor = CellPolygonVisitorWithOverlap {
             f,
@@ -1074,14 +1062,22 @@ pub enum ShapeTaverseStatus {
     Finish,
 }
 pub trait ShapeVisitor {
-    fn on_cell_start(&mut self, cell: &Cell, trans: Vec<Matrix3>) -> Vec<Matrix3> {
-        trans
+    fn on_cell_start(
+        &mut self,
+        cell: &Cell,
+        trans: Vec<Matrix3>,
+    ) -> Result<Vec<Matrix3>, ErrorCode> {
+        Ok(trans)
     }
-    fn on_cell_shape_end(&mut self, cell: &Cell, trans: Vec<Matrix3>) -> Vec<Matrix3> {
-        trans
+    fn on_cell_shape_end(
+        &mut self,
+        cell: &Cell,
+        trans: Vec<Matrix3>,
+    ) -> Result<Vec<Matrix3>, ErrorCode> {
+        Ok(trans)
     }
-    fn on_cell_end(&mut self, cell: &Cell, trans: Vec<Matrix3>) -> TraverseStatus {
-        TraverseStatus::Continue
+    fn on_cell_end(&mut self, cell: &Cell, trans: Vec<Matrix3>) -> Result<(), ErrorCode> {
+        Ok(())
     }
     fn on_polygon(
         &mut self,
@@ -1089,8 +1085,8 @@ pub trait ShapeVisitor {
         parent: &Cell,
         polygon_index: usize,
         trans: &Vec<Matrix3>,
-    ) -> bool {
-        true
+    ) -> Result<(), ErrorCode> {
+        Ok(())
     }
     fn on_flexpath(
         &mut self,
@@ -1098,8 +1094,8 @@ pub trait ShapeVisitor {
         parent: &Cell,
         flexpath_index: usize,
         trans: &Vec<Matrix3>,
-    ) -> bool {
-        true
+    ) -> Result<(), ErrorCode> {
+        Ok(())
     }
     fn on_robustpath(
         &mut self,
@@ -1107,8 +1103,8 @@ pub trait ShapeVisitor {
         parent: &Cell,
         robustpath_index: usize,
         trans: &Vec<Matrix3>,
-    ) -> bool {
-        true
+    ) -> Result<(), ErrorCode> {
+        Ok(())
     }
 }
 struct CellPolygonVisitor<F> {
@@ -1116,7 +1112,7 @@ struct CellPolygonVisitor<F> {
 }
 impl<F> ShapeVisitor for CellPolygonVisitor<F>
 where
-    F: FnMut(&PolygonRef, &Cell, &Vec<Matrix3>) -> bool,
+    F: FnMut(&PolygonRef, &Cell, &Vec<Matrix3>) -> Result<(), ErrorCode>,
 {
     fn on_polygon(
         &mut self,
@@ -1124,7 +1120,7 @@ where
         parent: &Cell,
         _polygon_index: usize,
         trans: &Vec<Matrix3>,
-    ) -> bool {
+    ) -> Result<(), ErrorCode> {
         (self.f)(poly, parent, trans)
     }
     fn on_flexpath(
@@ -1133,13 +1129,11 @@ where
         parent: &Cell,
         _flexpath_index: usize,
         trans: &Vec<Matrix3>,
-    ) -> bool {
+    ) -> Result<(), ErrorCode> {
         for polygon in flexpath.to_polygons() {
-            if !(self.f)(&polygon.to_ref(), parent, trans) {
-                return false;
-            }
+            (self.f)(&polygon.to_ref(), parent, trans)?;
         }
-        true
+        Ok(())
     }
     fn on_robustpath(
         &mut self,
@@ -1147,13 +1141,11 @@ where
         parent: &Cell,
         _robustpath_index: usize,
         trans: &Vec<Matrix3>,
-    ) -> bool {
+    ) -> Result<(), ErrorCode> {
         for polygon in robustpath.to_polygons() {
-            if !(self.f)(&polygon.to_ref(), parent, trans) {
-                return false;
-            }
+            (self.f)(&polygon.to_ref(), parent, trans)?;
         }
-        true
+        Ok(())
     }
 }
 pub struct BoundingBoxCache<'a> {
@@ -1229,9 +1221,9 @@ pub fn filter_overlapped_polygon<F>(
     poly: &PolygonRef,
     parent: &Cell,
     trans: &Vec<Matrix3>,
-) -> bool
+) -> Result<(), ErrorCode>
 where
-    F: FnMut(Vec<Point>, Rect, &PolygonRef, &Cell) -> bool,
+    F: FnMut(Vec<Point>, Rect, &PolygonRef, &Cell) -> Result<(), ErrorCode>,
 {
     let points = poly.to_points();
     let bbox = points.bounding_box();
@@ -1246,13 +1238,11 @@ where
                 target_area.intersect(&bbox2)
             };
             if is_intersect {
-                if !f(points.apply_transform(&transform), bbox2, poly, parent) {
-                    return false;
-                }
+                f(points.apply_transform(&transform), bbox2, poly, parent)?;
             }
         }
     }
-    true
+    Ok(())
 }
 pub fn filter_overlapped_flexpath_polygon<F>(
     mut f: F,
@@ -1261,9 +1251,9 @@ pub fn filter_overlapped_flexpath_polygon<F>(
     flexpath: &FlexPath,
     parent: &Cell,
     trans: &Vec<Matrix3>,
-) -> bool
+) -> Result<(), ErrorCode>
 where
-    F: FnMut(Vec<Point>, Rect, &PolygonRef, &Cell) -> bool,
+    F: FnMut(Vec<Point>, Rect, &PolygonRef, &Cell) -> Result<(), ErrorCode>,
 {
     for polygon in flexpath.to_polygons() {
         let poly = &polygon.to_ref();
@@ -1280,14 +1270,12 @@ where
                     target_area.intersect(&bbox2)
                 };
                 if is_intersect {
-                    if !f(points.apply_transform(&transform), bbox2, poly, parent) {
-                        return false;
-                    }
+                    f(points.apply_transform(&transform), bbox2, poly, parent)?;
                 }
             }
         }
     }
-    true
+    Ok(())
 }
 pub fn filter_overlapped_robustpath_polygon<F>(
     mut f: F,
@@ -1296,9 +1284,9 @@ pub fn filter_overlapped_robustpath_polygon<F>(
     robustpath: &RobustPath,
     parent: &Cell,
     trans: &Vec<Matrix3>,
-) -> bool
+) -> Result<(), ErrorCode>
 where
-    F: FnMut(Vec<Point>, Rect, &PolygonRef, &Cell) -> bool,
+    F: FnMut(Vec<Point>, Rect, &PolygonRef, &Cell) -> Result<(), ErrorCode>,
 {
     for polygon in robustpath.to_polygons() {
         let poly = &polygon.to_ref();
@@ -1315,26 +1303,32 @@ where
                     target_area.intersect(&bbox2)
                 };
                 if is_intersect {
-                    if !f(points.apply_transform(&transform), bbox2, poly, parent) {
-                        return false;
-                    }
+                    f(points.apply_transform(&transform), bbox2, poly, parent)?;
                 }
             }
         }
     }
-    true
+    Ok(())
 }
 impl<F> ShapeVisitor for CellPolygonVisitorWithOverlap<'_, F>
 where
-    F: FnMut(Vec<Point>, Rect, &PolygonRef, &Cell) -> bool,
+    F: FnMut(Vec<Point>, Rect, &PolygonRef, &Cell) -> Result<(), ErrorCode>,
 {
-    fn on_cell_start(&mut self, cell: &Cell, trans: Vec<Matrix3>) -> Vec<Matrix3> {
-        let area = self.cache.get(cell.id()).expect(&format!(
-            "not found cell id {} ({})",
-            cell.id(),
-            cell.name()
-        ));
-        filter_overlapped_cells(&self.area, self.strictly, &area, trans)
+    fn on_cell_start(
+        &mut self,
+        cell: &Cell,
+        trans: Vec<Matrix3>,
+    ) -> Result<Vec<Matrix3>, ErrorCode> {
+        let area = self
+            .cache
+            .get(cell.id())
+            .ok_or_else(|| ErrorCode::TraverseError(format!("cell not found ({})", cell.id())))?;
+        Ok(filter_overlapped_cells(
+            &self.area,
+            self.strictly,
+            &area,
+            trans,
+        ))
     }
     fn on_polygon(
         &mut self,
@@ -1342,7 +1336,7 @@ where
         parent: &Cell,
         _polygon_index: usize,
         trans: &Vec<Matrix3>,
-    ) -> bool {
+    ) -> Result<(), ErrorCode> {
         filter_overlapped_polygon(
             |a, b, c, d| (self.f)(a, b, c, d),
             &self.area,
@@ -1358,7 +1352,7 @@ where
         parent: &Cell,
         _flexpath_index: usize,
         trans: &Vec<Matrix3>,
-    ) -> bool {
+    ) -> Result<(), ErrorCode> {
         filter_overlapped_flexpath_polygon(
             |a, b, c, d| (self.f)(a, b, c, d),
             &self.area,
@@ -1374,7 +1368,7 @@ where
         parent: &Cell,
         _robustpath_index: usize,
         trans: &Vec<Matrix3>,
-    ) -> bool {
+    ) -> Result<(), ErrorCode> {
         filter_overlapped_robustpath_polygon(
             |a, b, c, d| (self.f)(a, b, c, d),
             &self.area,

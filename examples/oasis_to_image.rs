@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::anyhow;
 use clap::Parser;
 use gdstk_parse::{
     ApplyTransform, BoundingBoxCache, Cell, GetBoundingBox, Library, Matrix3, Point, PolygonRef,
@@ -83,7 +83,7 @@ fn draw_polygons(
     polygon_bounds: bool,
     area: Option<Vec<f64>>,
     cache: Option<BoundingBoxCache>,
-) -> RgbaImage {
+) -> anyhow::Result<RgbaImage> {
     let (min, max) = cell.bounding_box().min_max();
     let cell_w = max.x - min.x;
     let cell_h = max.y - min.y;
@@ -147,9 +147,9 @@ fn draw_polygons(
                 if polygon_bounds {
                     draw_area(bbox);
                 }
-                true
+                Ok(())
             },
-        );
+        )?;
     } else {
         cell.traverse_polygons(|poly: &PolygonRef, _cell: &Cell, trans: &Vec<Matrix3>| {
             let color = *colors
@@ -179,14 +179,14 @@ fn draw_polygons(
                     draw_area(bbox);
                 }
             }
-            true
-        });
+            Ok(())
+        })?;
     }
     if cell_bounds {
         draw_area(cell.bounding_box());
     }
     println!("number of polygon is {}", count);
-    image
+    Ok(image)
 }
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -218,7 +218,7 @@ struct Args {
     area: Option<Vec<f64>>,
 }
 
-fn main() -> Result<()> {
+fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let path = Path::new(&args.input);
     let lib = if let Some(ext) = path.extension() {
@@ -266,7 +266,7 @@ fn main() -> Result<()> {
         args.polygon_bounds,
         args.area,
         cache,
-    )
+    )?
     .save(args.output.clone())?;
 
     if let Some(answer) = args.answer {

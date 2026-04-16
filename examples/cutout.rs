@@ -1,9 +1,13 @@
-use anyhow::{anyhow, Result};
+use anyhow::anyhow;
 use clap::Parser;
 use gdstk_parse::{BoundingBoxCache, Cell, Library, Point, Polygon, PolygonRef, Rect};
 use std::path::Path;
 
-fn extract_polygons(cell: &Cell, area: Vec<f64>, cache: &BoundingBoxCache) -> Vec<Polygon> {
+fn extract_polygons(
+    cell: &Cell,
+    area: Vec<f64>,
+    cache: &BoundingBoxCache,
+) -> anyhow::Result<Vec<Polygon>> {
     let mut polygons = Vec::new();
     let area = Rect::new(Point::new(area[0], area[1]), Point::new(area[2], area[3]));
     cell.traverse_polygons_with_overlap_strictly(
@@ -11,10 +15,10 @@ fn extract_polygons(cell: &Cell, area: Vec<f64>, cache: &BoundingBoxCache) -> Ve
         cache,
         |points: Vec<Point>, _bbox: Rect, poly: &PolygonRef, _cell: &Cell| {
             polygons.push(Polygon::from_points(&points, poly.layer(), poly.datatype()));
-            true
+            Ok(())
         },
-    );
-    polygons
+    )?;
+    Ok(polygons)
 }
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -37,7 +41,7 @@ struct Args {
     area: Vec<f64>,
 }
 
-fn main() -> Result<()> {
+fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let path = Path::new(&args.input);
     let lib = if let Some(ext) = path.extension() {
@@ -58,7 +62,7 @@ fn main() -> Result<()> {
         return Err(anyhow!("no top cell"));
     }
     let cache = lib.create_bounding_box_cache();
-    let polygons = extract_polygons(&cells[top_cell_index], args.area.clone(), &cache);
+    let polygons = extract_polygons(&cells[top_cell_index], args.area.clone(), &cache)?;
 
     let mut wlib = Library::new("cutout", 1e-6, 1e-9)?;
 
