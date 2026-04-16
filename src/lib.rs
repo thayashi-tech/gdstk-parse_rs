@@ -739,10 +739,7 @@ impl<'a> Reference<'a> {
     ) -> bool {
         if let Some(cell) = self.cell() {
             let trans2 = self.reference_transforms(trans);
-            let trans2 = visitor.filter_reference(&cell, trans2);
-            if trans2.len() > 0 {
-                return cell.traverse_shapes_recursive(visitor, &trans2);
-            }
+            return cell.traverse_shapes_recursive(visitor, trans2);
         }
         true
     }
@@ -977,46 +974,43 @@ impl<'a> Cell<'a> {
     }
     pub fn traverse_shapes<V: ShapeVisitor>(&self, visitor: &mut V) -> bool {
         let trans = vec![Matrix3::IDENTITY];
-        self.traverse_shapes_recursive(visitor, &trans)
+        self.traverse_shapes_recursive(visitor, trans)
     }
     pub(crate) fn traverse_shapes_recursive<V: ShapeVisitor>(
         &self,
         visitor: &mut V,
-        trans: &Vec<Matrix3>,
+        trans: Vec<Matrix3>,
     ) -> bool {
-        match visitor.on_cell_start(&self, trans) {
-            TraverseStatus::Continue => {}
-            TraverseStatus::Skip => return true,
-            TraverseStatus::Finish => return false,
-        }
+        let trans = visitor.on_cell_start(&self, trans);
         for i in 0..self.count_polygon_refs() {
             let poly = self.polygon_ref(i);
-            if !visitor.on_polygon(&poly, &self, i, trans) {
+            if !visitor.on_polygon(&poly, &self, i, &trans) {
                 return false;
             }
+        }
+        if trans.is_empty() {
+            return true;
         }
         // flexpath
         for i in 0..self.count_flexpaths() {
             let path = self.flexpath(i);
-            if !visitor.on_flexpath(&path, &self, i, trans) {
+            if !visitor.on_flexpath(&path, &self, i, &trans) {
                 return false;
             }
         }
         // robustpath
         for i in 0..self.count_robustpaths() {
             let path = self.robustpath(i);
-            if !visitor.on_robustpath(&path, &self, i, trans) {
+            if !visitor.on_robustpath(&path, &self, i, &trans) {
                 return false;
             }
         }
-        match visitor.on_cell_shape_end(&self, trans) {
-            TraverseStatus::Continue => {}
-            TraverseStatus::Skip => return true,
-            TraverseStatus::Finish => return false,
-        }
-        for i in 0..self.count_references() {
-            if !self.reference(i).traverse_shapes_recursive(visitor, trans) {
-                return false;
+        let trans = visitor.on_cell_shape_end(&self, trans);
+        if !trans.is_empty() {
+            for i in 0..self.count_references() {
+                if !self.reference(i).traverse_shapes_recursive(visitor, &trans) {
+                    return false;
+                }
             }
         }
         match visitor.on_cell_end(&self, trans) {
@@ -1080,17 +1074,14 @@ pub enum ShapeTaverseStatus {
     Finish,
 }
 pub trait ShapeVisitor {
-    fn on_cell_start(&mut self, cell: &Cell, trans: &Vec<Matrix3>) -> TraverseStatus {
-        TraverseStatus::Continue
-    }
-    fn on_cell_shape_end(&mut self, cell: &Cell, trans: &Vec<Matrix3>) -> TraverseStatus {
-        TraverseStatus::Continue
-    }
-    fn on_cell_end(&mut self, cell: &Cell, trans: &Vec<Matrix3>) -> TraverseStatus {
-        TraverseStatus::Continue
-    }
-    fn filter_reference(&mut self, cell: &Cell, trans: Vec<Matrix3>) -> Vec<Matrix3> {
+    fn on_cell_start(&mut self, cell: &Cell, trans: Vec<Matrix3>) -> Vec<Matrix3> {
         trans
+    }
+    fn on_cell_shape_end(&mut self, cell: &Cell, trans: Vec<Matrix3>) -> Vec<Matrix3> {
+        trans
+    }
+    fn on_cell_end(&mut self, cell: &Cell, trans: Vec<Matrix3>) -> TraverseStatus {
+        TraverseStatus::Continue
     }
     fn on_polygon(
         &mut self,
@@ -1208,7 +1199,7 @@ struct CellPolygonVisitorWithOverlap<'a, F> {
     strictly: bool,
     cache: &'a BoundingBoxCache<'a>,
 }
-pub fn filter_overlapped_reference(
+pub fn filter_overlapped_cells(
     target_area: &Rect,
     is_strictly: bool,
     area: &Rect,
@@ -1337,13 +1328,13 @@ impl<F> ShapeVisitor for CellPolygonVisitorWithOverlap<'_, F>
 where
     F: FnMut(Vec<Point>, Rect, &PolygonRef, &Cell) -> bool,
 {
-    fn filter_reference(&mut self, cell: &Cell, trans: Vec<Matrix3>) -> Vec<Matrix3> {
+    fn on_cell_start(&mut self, cell: &Cell, trans: Vec<Matrix3>) -> Vec<Matrix3> {
         let area = self.cache.get(cell.id()).expect(&format!(
             "not found cell id {} ({})",
             cell.id(),
             cell.name()
         ));
-        filter_overlapped_reference(&self.area, self.strictly, &area, trans)
+        filter_overlapped_cells(&self.area, self.strictly, &area, trans)
     }
     fn on_polygon(
         &mut self,
