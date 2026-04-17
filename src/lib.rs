@@ -1160,9 +1160,6 @@ impl<'a> BoundingBoxCache<'a> {
     fn get(&self, id: usize) -> Option<Rect> {
         self.map.get(&id).copied()
     }
-    fn get_raw(&self) -> HashMap<usize, Rect> {
-        self.map.clone()
-    }
 }
 fn area_is_overlap(area1: (Point, Point), area2: (Point, Point)) -> bool {
     let (min1, max1) = area1;
