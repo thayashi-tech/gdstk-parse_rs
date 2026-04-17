@@ -981,12 +981,13 @@ impl<'a> Cell<'a> {
         trans: Vec<Matrix3>,
     ) -> Result<(), ErrorCode> {
         let trans = visitor.on_cell_start(&self, trans)?;
+        if trans.is_empty() {
+            return Ok(());
+        }
+        // polygon
         for i in 0..self.count_polygon_refs() {
             let poly = self.polygon_ref(i);
             visitor.on_polygon(&poly, &self, i, &trans)?;
-        }
-        if trans.is_empty() {
-            return Ok(());
         }
         // flexpath
         for i in 0..self.count_flexpaths() {

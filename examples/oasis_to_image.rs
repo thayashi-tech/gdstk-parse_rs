@@ -12,22 +12,17 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::Path;
 
+use colored::*;
 use image::{codecs::png::PngDecoder, ImageDecoder};
+use std::fs;
 use std::io::Cursor;
 use std::process;
 
 fn get_image_data(path: &str) -> anyhow::Result<(u32, u32, Vec<u8>)> {
     let img = std::fs::read(path)?;
-    let img_bytes = img.as_slice();
-    let cursor = Cursor::new(img_bytes);
-    let decoder = PngDecoder::new(cursor)?;
-
-    let (width, height) = decoder.dimensions();
-
-    let mut buf = vec![0; decoder.total_bytes() as usize];
-    decoder.read_image(&mut buf)?;
-
-    Ok((width, height, buf))
+    let cursor = Cursor::new(img.as_slice());
+    let (width, height) = PngDecoder::new(cursor)?.dimensions();
+    Ok((width, height, img))
 }
 
 struct BlendCanvas<'a>(&'a mut RgbaImage);
@@ -208,6 +203,9 @@ struct Args {
     #[arg(short = 'A', long)]
     answer: Option<String>,
 
+    #[arg(short = 'q', long, default_value_t = true)]
+    quiet: bool,
+
     #[arg(long, default_value_t = false)]
     cell_bounds: bool,
 
@@ -234,19 +232,21 @@ fn main() -> anyhow::Result<()> {
     }?;
 
     let (cells, _) = lib.top_level();
-    println!("number of cells {}", cells.len());
-    for cell in cells.iter() {
-        println!("top cell name {}", cell.name());
-    }
-    println!("layers");
-    for i in 0..lib.count_layernames() {
-        let layername = lib.layername(i);
-        println!(
-            "  {} -- {}:{}",
-            layername.name(),
-            layername.layer(),
-            layername.datatype()
-        );
+    if !args.quiet {
+        println!("number of cells {}", cells.len());
+        for cell in cells.iter() {
+            println!("top cell name {}", cell.name());
+        }
+        println!("layers");
+        for i in 0..lib.count_layernames() {
+            let layername = lib.layername(i);
+            println!(
+                "  {} -- {}:{}",
+                layername.name(),
+                layername.layer(),
+                layername.datatype()
+            );
+        }
     }
     // draw top level
     let top_cell_index = args.top_cell as usize;
@@ -277,7 +277,7 @@ fn main() -> anyhow::Result<()> {
             anyhow::bail!("Image dimensions do not match");
         }
 
-        let mut diff = vec![0; (w1 * h1 * 4) as usize];
+        let mut diff = Vec::new();
         let options = pixelmatch::Options {
             threshold: 0.1,
             ..Default::default()
@@ -291,10 +291,14 @@ fn main() -> anyhow::Result<()> {
             None,
             Some(options),
         );
-        std::fs::write("diff.png", diff)?;
+
         if num_diff_pixels.unwrap() > 0 {
+            let diff_path = Path::new(&args.output).with_extension("diff.png");
+            println!("{} ({:?})", "diff found!!".red(), diff_path);
+            fs::write(diff_path, diff)?;
             process::exit(66);
         }
+        println!("{}", "match !!!".blue());
     }
     Ok(())
 }

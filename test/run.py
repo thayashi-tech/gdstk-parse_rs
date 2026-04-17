@@ -7,6 +7,7 @@ O2I = f"../target/{RELEASE}/examples/oasis_to_image"
 CUTOUT = f"../target/{RELEASE}/examples/cutout"
 DATADIR = "testdata"
 OUTPUT = "output"
+ANSWER = "answer"
 
 
 def test_image_to_oasis_area():
@@ -19,6 +20,7 @@ def test_image_to_oasis_area():
     input_file = f"{DATADIR}/figure_transform.oas"
     input = Path(input_file).stem
     for i, area in enumerate(areas):
+        outname = f"i2o_{input}_{i}.png"
         cmd = [
             O2I,
             input_file,
@@ -29,7 +31,9 @@ def test_image_to_oasis_area():
             "--area",
             ",".join(map(str, area)),
             "-o",
-            f"{OUTPUT}/io2_{input}_{i}.png",
+            f"{OUTPUT}/{outname}",
+            "--answer",
+            f"{ANSWER}/{outname}",
         ]
         print(" ".join(cmd))
         subprocess.run(cmd)
@@ -38,6 +42,7 @@ def test_image_to_oasis_area():
 def test_image_to_oasis_inner(filename: str, topcell: int):
     input_file = f"{DATADIR}/{filename}"
     input = Path(input_file).stem
+    outname = f"i2o_{input}_all.png"
     cmd = [
         O2I,
         input_file,
@@ -46,7 +51,9 @@ def test_image_to_oasis_inner(filename: str, topcell: int):
         "--top-cell",
         f"{topcell}",
         "-o",
-        f"{OUTPUT}/io2_{input}_all.png",
+        f"{OUTPUT}/{outname}",
+        "--answer",
+        f"{ANSWER}/{outname}",
     ]
     print(" ".join(cmd))
     subprocess.run(cmd)
@@ -99,6 +106,8 @@ def test_cutout_area(do_clip: bool = False):
             ",".join(map(str, area)),
             "-o",
             f"{OUTPUT}/{name}.png",
+            "--answer",
+            f"{ANSWER}/{name}.png",
         ]
         print(" ".join(cmd))
         subprocess.run(cmd)
