@@ -349,6 +349,11 @@ impl Rect {
         self.min = Point::new(self.min.x.min(p.x), self.min.y.min(p.y));
         self.max = Point::new(self.max.x.max(p.x), self.max.y.max(p.y));
     }
+    pub fn merge(&mut self, other: &Self) {
+        let (min, max) = other.min_max();
+        self.expand(min);
+        self.expand(max);
+    }
     pub fn min_max(&self) -> (Point, Point) {
         (self.min, self.max)
     }
