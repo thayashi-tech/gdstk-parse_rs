@@ -28,6 +28,7 @@ include_cpp! {
     generate!("gdstk_parse_rs::TopLevelResult")
     generate!("gdstk_parse_rs::PolygonSlice")
     generate_pod!("gdstk_parse_rs::LayerInterval")
+    generate_pod!("gdstk_parse_rs::RectangularRepeats")
 
     // gdstk objects
     generate!("gdstk::Polygon")
@@ -133,6 +134,7 @@ include_cpp! {
 
     // Repetition
     generate!("gdstk_parse_rs::repetition_foreach_offset")
+    generate!("gdstk_parse_rs::repetition_get_rectangular_repeats")
 
     // rawcell
     generate!("gdstk_parse_rs::rawcell_get_name")
@@ -403,6 +405,17 @@ impl Rect {
     pub fn is_valid(&self) -> bool {
         self.width() >= 0.0 && self.height() >= 0.0
     }
+    pub fn is_empty(&self) -> bool {
+        self.width() <= 0.0 || self.height() <= 0.0
+    }
+    pub fn and(&self, other: &Rect) -> Self {
+        let (smin, smax) = self.min_max();
+        let (omin, omax) = other.min_max();
+        Self {
+            min: Point::new(smin.x.max(omin.x), smin.y.min(omin.y)),
+            max: Point::new(smax.x.max(omax.x), smax.y.min(omax.y)),
+        }
+    }
 }
 impl ApplyTransform for Rect {
     fn apply_transform(&self, trans: &Matrix3) -> Self {
@@ -647,6 +660,15 @@ impl<'a> Repetition<'a> {
             true
         });
         results
+    }
+    fn rectangular_repeats(&self) -> Option<(f64, f64, usize, usize)> {
+        let results =
+            unsafe { ffi::gdstk_parse_rs::repetition_get_rectangular_repeats(&*self.inner) };
+        if results.enable {
+            Some((results.dx, results.dy, results.nx, results.ny))
+        } else {
+            None
+        }
     }
 }
 pub struct PolygonRef<'a> {

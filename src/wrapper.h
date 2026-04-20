@@ -370,6 +370,27 @@ namespace gdstk_parse_rs {
         }
         offsets.clear();
     }
+    struct RectangularRepeats {
+        bool enable;
+        double dx;
+        double dy;
+        size_t nx;
+        size_t ny;
+    };
+    inline RectangularRepeats repetition_get_rectangular_repeats(
+        const gdstk::Repetition &self) {
+        RectangularRepeats results{};
+        if (self.type == gdstk::RepetitionType::Rectangular) {
+            results.enable = true;
+            results.dx = self.spacing.x;
+            results.dy = self.spacing.y;
+            results.nx = self.columns;
+            results.ny = self.rows;
+        } else {
+            results.enable = false;
+        }
+        return results;            
+    }
     inline const gdstk::Repetition *polygon_ref_get_repetition(const gdstk::Polygon &self) {
         return &self.repetition;
     }
