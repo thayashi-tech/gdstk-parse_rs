@@ -412,8 +412,8 @@ impl Rect {
         let (smin, smax) = self.min_max();
         let (omin, omax) = other.min_max();
         Self {
-            min: Point::new(smin.x.max(omin.x), smin.y.min(omin.y)),
-            max: Point::new(smax.x.max(omax.x), smax.y.min(omax.y)),
+            min: Point::new(smin.x.max(omin.x), smin.y.max(omin.y)),
+            max: Point::new(smax.x.min(omax.x), smax.y.min(omax.y)),
         }
     }
 }
