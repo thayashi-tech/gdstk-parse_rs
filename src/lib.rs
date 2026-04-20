@@ -351,8 +351,8 @@ impl Rect {
     }
     pub fn merge(&mut self, other: &Self) {
         let (min, max) = other.min_max();
-        self.expand(min);
-        self.expand(max);
+        self.min = Point::new(self.min.x.min(min.x), self.min.y.min(min.y));
+        self.max = Point::new(self.max.x.max(max.x), self.max.y.max(max.y));
     }
     pub fn min_max(&self) -> (Point, Point) {
         (self.min, self.max)
@@ -400,9 +400,15 @@ impl Rect {
         let (min, max) = self.min_max();
         max.y - min.y
     }
+    pub fn is_valid(&self) -> bool {
+        self.width() >= 0.0 && self.height() >= 0.0
+    }
 }
 impl ApplyTransform for Rect {
     fn apply_transform(&self, trans: &Matrix3) -> Self {
+        if !self.is_valid() {
+            return self.clone();
+        }
         let (min, max) = self.min_max();
         let p = min.apply_transform(trans);
         let q = max.apply_transform(trans);
