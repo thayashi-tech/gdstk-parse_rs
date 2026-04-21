@@ -391,6 +391,26 @@ namespace gdstk_parse_rs {
         }
         return results;            
     }
+    inline size_t repetition_get_count(
+        const gdstk::Repetition &self) {
+        return self.get_count();
+    }
+    struct RepetitionExtremaResult {
+        gdstk::Array<gdstk::Vec2> data;
+        Point2D get(size_t i) const {
+            assert(i < data.count);
+            return Point2D{data.items[i].x, data.items[i].y};
+        }
+        size_t count() const {
+            return data.count;
+        }
+    };
+    inline RepetitionExtremaResult repetition_get_extrema(
+        const gdstk::Repetition &self) {
+        RepetitionExtremaResult result{};
+        self.get_extrema(result.data);
+        return result;
+    }
     inline const gdstk::Repetition *polygon_ref_get_repetition(const gdstk::Polygon &self) {
         return &self.repetition;
     }

@@ -29,6 +29,7 @@ include_cpp! {
     generate!("gdstk_parse_rs::PolygonSlice")
     generate_pod!("gdstk_parse_rs::LayerInterval")
     generate_pod!("gdstk_parse_rs::RectangularRepeats")
+    generate!("gdstk_parse_rs::RepetitionExtremaResult")
 
     // gdstk objects
     generate!("gdstk::Polygon")
@@ -135,6 +136,8 @@ include_cpp! {
     // Repetition
     generate!("gdstk_parse_rs::repetition_foreach_offset")
     generate!("gdstk_parse_rs::repetition_get_rectangular_repeats")
+    generate!("gdstk_parse_rs::repetition_get_count")
+    generate!("gdstk_parse_rs::repetition_get_extrema")
 
     // rawcell
     generate!("gdstk_parse_rs::rawcell_get_name")
@@ -670,6 +673,21 @@ impl<'a> Repetition<'a> {
             None
         }
     }
+    fn extrema(&self) -> Vec<Point> {
+        let mut points = Vec::new();
+        unsafe {
+            let result =
+                ffi::gdstk_parse_rs::repetition_get_extrema(&*self.inner).within_unique_ptr();
+            for i in 0..result.count() {
+                let p = result.get(i);
+                points.push(Point::new(p.x, p.y));
+            }
+        }
+        points
+    }
+    fn count(&self) -> usize {
+        unsafe { ffi::gdstk_parse_rs::repetition_get_count(&*self.inner) }
+    }
 }
 pub struct PolygonRef<'a> {
     pub(crate) inner: *const ffi::gdstk::Polygon,
@@ -775,8 +793,10 @@ impl<'a> Reference<'a> {
         trans: &Vec<Matrix3>,
     ) -> Result<(), ErrorCode> {
         if let Some(cell) = self.cell() {
-            let trans2 = self.reference_transforms(trans);
-            return cell.traverse_shapes_recursive(visitor, trans2);
+            let trans2 = visitor.reference_transforms(self, trans)?;
+            if trans2.len() > 0 {
+                return cell.traverse_shapes_recursive(visitor, trans2);
+            }
         }
         Ok(())
     }
@@ -1096,6 +1116,13 @@ pub enum ShapeTaverseStatus {
     Finish,
 }
 pub trait ShapeVisitor {
+    fn reference_transforms(
+        &mut self,
+        reference: &Reference,
+        trans: &Vec<Matrix3>,
+    ) -> Result<Vec<Matrix3>, ErrorCode> {
+        Ok(reference.reference_transforms(trans))
+    }
     fn on_cell_start(
         &mut self,
         cell: &Cell,
