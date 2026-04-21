@@ -391,6 +391,27 @@ namespace gdstk_parse_rs {
         }
         return results;            
     }
+    struct RegularRepeats {
+        bool enable;
+        Point2D v1;
+        Point2D v2;
+        size_t n1;
+        size_t n2;
+    };
+    inline RegularRepeats repetition_get_regular_repeats(
+        const gdstk::Repetition &self) {
+        RegularRepeats results{};
+        if (self.type == gdstk::RepetitionType::Regular) {
+            results.enable = true;
+            results.v1 = Point2D{self.v1.x, self.v1.y};
+            results.v2 = Point2D{self.v2.x, self.v2.y};
+            results.n1 = self.columns;
+            results.n2 = self.rows;
+        } else {
+            results.enable = false;
+        }
+        return results;            
+    }
     inline size_t repetition_get_count(
         const gdstk::Repetition &self) {
         return self.get_count();

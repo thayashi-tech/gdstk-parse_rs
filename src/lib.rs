@@ -29,6 +29,7 @@ include_cpp! {
     generate!("gdstk_parse_rs::PolygonSlice")
     generate_pod!("gdstk_parse_rs::LayerInterval")
     generate_pod!("gdstk_parse_rs::RectangularRepeats")
+    generate_pod!("gdstk_parse_rs::RegularRepeats")
     generate!("gdstk_parse_rs::RepetitionExtremaResult")
 
     // gdstk objects
@@ -136,6 +137,7 @@ include_cpp! {
     // Repetition
     generate!("gdstk_parse_rs::repetition_foreach_offset")
     generate!("gdstk_parse_rs::repetition_get_rectangular_repeats")
+    generate!("gdstk_parse_rs::repetition_get_regular_repeats")
     generate!("gdstk_parse_rs::repetition_get_count")
     generate!("gdstk_parse_rs::repetition_get_extrema")
 
@@ -669,6 +671,19 @@ impl<'a> Repetition<'a> {
             unsafe { ffi::gdstk_parse_rs::repetition_get_rectangular_repeats(&*self.inner) };
         if results.enable {
             Some((results.dx, results.dy, results.nx, results.ny))
+        } else {
+            None
+        }
+    }
+    fn regular_repeats(&self) -> Option<(Point, Point, usize, usize)> {
+        let results = unsafe { ffi::gdstk_parse_rs::repetition_get_regular_repeats(&*self.inner) };
+        if results.enable {
+            Some((
+                Point::new(results.v1.x, results.v1.y),
+                Point::new(results.v2.x, results.v2.y),
+                results.n1,
+                results.n2,
+            ))
         } else {
             None
         }
