@@ -425,6 +425,9 @@ namespace gdstk_parse_rs {
         size_t count() const {
             return data.count;
         }
+        void cleanup() {
+            data.clear();
+        }
     };
     inline RepetitionExtremaResult repetition_get_extrema(
         const gdstk::Repetition &self) {

@@ -191,7 +191,7 @@ pub enum ErrorCode {
     // additional
     #[error("missing cell")]
     MissingCell,
-    #[error("traverse error")]
+    #[error("traverse error: {0}")]
     TraverseError(String),
     #[error("traverse abort")]
     TraverseAbort,
@@ -658,7 +658,7 @@ impl<'a> Repetition<'a> {
             )
         }
     }
-    fn to_offsets(&self) -> Vec<Vector> {
+    pub fn to_offsets(&self) -> Vec<Vector> {
         let mut results = Vec::new();
         self.foreach_repetition_offset(|x, y| {
             results.push(Vector::new(x, y));
@@ -666,7 +666,7 @@ impl<'a> Repetition<'a> {
         });
         results
     }
-    fn rectangular_repeats(&self) -> Option<(f64, f64, usize, usize)> {
+    pub fn rectangular_repeats(&self) -> Option<(f64, f64, usize, usize)> {
         let results =
             unsafe { ffi::gdstk_parse_rs::repetition_get_rectangular_repeats(&*self.inner) };
         if results.enable {
@@ -675,7 +675,7 @@ impl<'a> Repetition<'a> {
             None
         }
     }
-    fn regular_repeats(&self) -> Option<(Point, Point, usize, usize)> {
+    pub fn regular_repeats(&self) -> Option<(Point, Point, usize, usize)> {
         let results = unsafe { ffi::gdstk_parse_rs::repetition_get_regular_repeats(&*self.inner) };
         if results.enable {
             Some((
@@ -688,19 +688,24 @@ impl<'a> Repetition<'a> {
             None
         }
     }
-    fn extrema(&self) -> Vec<Point> {
+    pub fn extrema(&self) -> Vec<Point> {
         let mut points = Vec::new();
         unsafe {
-            let result =
+            let mut result =
                 ffi::gdstk_parse_rs::repetition_get_extrema(&*self.inner).within_unique_ptr();
             for i in 0..result.count() {
                 let p = result.get(i);
                 points.push(Point::new(p.x, p.y));
             }
+            let mut pinned = result.pin_mut();
+            pinned.as_mut().cleanup();
+        }
+        if points.is_empty() {
+            points.push(Point::new(0.0, 0.0));
         }
         points
     }
-    fn count(&self) -> usize {
+    pub fn count(&self) -> usize {
         unsafe { ffi::gdstk_parse_rs::repetition_get_count(&*self.inner) }
     }
 }
