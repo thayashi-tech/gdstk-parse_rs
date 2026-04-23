@@ -435,6 +435,10 @@ namespace gdstk_parse_rs {
         self.get_extrema(result.data);
         return result;
     }
+    inline gdstk::RepetitionType repetition_get_type(
+        const gdstk::Repetition &self) {
+        return self.type;
+    }
     inline const gdstk::Repetition *polygon_ref_get_repetition(const gdstk::Polygon &self) {
         return &self.repetition;
     }

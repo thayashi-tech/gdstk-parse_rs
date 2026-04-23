@@ -42,6 +42,7 @@ include_cpp! {
     generate!("gdstk::Tag")
     generate!("gdstk::make_tag")
     generate!("gdstk::Operation")
+    generate!("gdstk::RepetitionType")
 
     // Library
     generate!("gdstk_parse_rs::LibraryOwner")
@@ -140,6 +141,7 @@ include_cpp! {
     generate!("gdstk_parse_rs::repetition_get_regular_repeats")
     generate!("gdstk_parse_rs::repetition_get_count")
     generate!("gdstk_parse_rs::repetition_get_extrema")
+    generate!("gdstk_parse_rs::repetition_get_type")
 
     // rawcell
     generate!("gdstk_parse_rs::rawcell_get_name")
@@ -306,6 +308,27 @@ impl LayerInterval {
         }
     }
 }
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum RepetitionType {
+    None,
+    Rectangular,
+    Regular,
+    Explicit,
+    ExplicitX,
+    ExplicitY,
+}
+impl RepetitionType {
+    pub fn from_ffi(repetition_type: ffi::gdstk::RepetitionType) -> Self {
+        match repetition_type {
+            ffi::gdstk::RepetitionType::None => RepetitionType::None,
+            ffi::gdstk::RepetitionType::Rectangular => RepetitionType::Rectangular,
+            ffi::gdstk::RepetitionType::Regular => RepetitionType::Regular,
+            ffi::gdstk::RepetitionType::Explicit => RepetitionType::Explicit,
+            ffi::gdstk::RepetitionType::ExplicitX => RepetitionType::ExplicitX,
+            ffi::gdstk::RepetitionType::ExplicitY => RepetitionType::ExplicitY,
+        }
+    }
+}
 pub trait ApplyTransform {
     fn apply_transform(&self, trans: &Matrix3) -> Self;
 }
@@ -458,6 +481,7 @@ where
     let closure = unsafe { &mut *(user_data as *mut F) };
     closure(x, y)
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BooleanOperation {
     Or,
     And,
@@ -707,6 +731,9 @@ impl<'a> Repetition<'a> {
     }
     pub fn count(&self) -> usize {
         unsafe { ffi::gdstk_parse_rs::repetition_get_count(&*self.inner) }
+    }
+    pub fn repetition_type(&self) -> RepetitionType {
+        RepetitionType::from_ffi(unsafe { ffi::gdstk_parse_rs::repetition_get_type(&*self.inner) })
     }
 }
 pub struct PolygonRef<'a> {
@@ -1129,11 +1156,6 @@ impl<'a> Cell<'a> {
     pub fn append_polygon(&mut self, polygon: &Polygon) {
         unsafe { ffi::gdstk_parse_rs::cell_append_polygon(self.as_mut(), &*polygon.inner) }
     }
-}
-pub enum ShapeTaverseStatus {
-    Continue,
-    Skip,
-    Finish,
 }
 pub trait ShapeVisitor {
     fn reference_transforms(
