@@ -444,6 +444,21 @@ impl Rect {
             max: Point::new(smax.x.min(omax.x), smax.y.min(omax.y)),
         }
     }
+    pub fn inflate(&self, margin: f64) -> Self {
+        self.inflate_xy(margin, margin)
+    }
+    pub fn inflate_xy(&self, margin_x: f64, margin_y: f64) -> Self {
+        let (min, max) = self.min_max();
+        Self {
+            min: min - Point::new(margin_x, margin_y),
+            max: max + Point::new(margin_x, margin_y),
+        }
+    }
+    pub fn inside(&self, other: &Rect) -> bool {
+        let (smin, smax) = self.min_max();
+        let (omin, omax) = other.min_max();
+        smin.x <= omin.x && omax.x <= smax.x && smin.y <= omin.y && omax.y <= smax.y
+    }
 }
 impl ApplyTransform for Rect {
     fn apply_transform(&self, trans: &Matrix3) -> Self {
