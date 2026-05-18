@@ -59,6 +59,9 @@ namespace gdstk_parse_rs {
             }
             data.clear();
         }
+        ~PolygonArrayTransfer() {
+            cleanup();
+        }
     };
     struct TopLevelResult {
         gdstk::Array<gdstk::Cell*> cells;
@@ -77,6 +80,9 @@ namespace gdstk_parse_rs {
         void cleanup() {
             cells.clear();
             rawcells.clear();
+        }
+        ~TopLevelResult() {
+            cleanup();
         }
     };
     static char *cstring_dedup(const char *src) {

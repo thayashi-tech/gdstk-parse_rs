@@ -354,7 +354,6 @@ pub trait ToPolygons {
             for i in 0..pinned.count() {
                 result.push(Polygon::from_raw(pinned.as_mut().into(i)));
             }
-            pinned.as_mut().cleanup();
             result
         }
     }
@@ -639,7 +638,6 @@ impl Polygon {
         for i in 0..pinned.count() {
             polygons.push(Self::from_raw(pinned.as_mut().into(i)));
         }
-        pinned.as_mut().cleanup();
         Ok(polygons)
     }
     pub fn set_layer(&mut self, layer: u32) {
@@ -736,8 +734,6 @@ impl<'a> Repetition<'a> {
                 let p = result.get(i);
                 points.push(Point::new(p.x, p.y));
             }
-            let mut pinned = result.pin_mut();
-            pinned.as_mut().cleanup();
         }
         if points.is_empty() {
             points.push(Point::new(0.0, 0.0));
